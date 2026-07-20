@@ -290,7 +290,10 @@ Please advise me where I should park.`;
     res.json({ recommendation: response.text });
   } catch (error: any) {
     console.error("Gemini Assistant error:", error);
-    res.status(500).json({ error: "Assistant is currently resting. Please try again soon." });
+    res.status(500).json({ 
+      error: "Assistant is currently resting. Please try again soon.",
+      details: error.message || error.toString()
+    });
   }
 });
 
