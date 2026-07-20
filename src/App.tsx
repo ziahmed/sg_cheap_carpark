@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { APIProvider } from "@vis.gl/react-google-maps";
 import { Carpark, UserAlert } from "./types.ts";
 import MapContainer from "./components/MapContainer.tsx";
+import OfflineMapPreview from "./components/OfflineMapPreview.tsx";
 import CarparkList from "./components/CarparkList.tsx";
 import AlertManager from "./components/AlertManager.tsx";
 import SmartAssistant from "./components/SmartAssistant.tsx";
@@ -33,6 +34,7 @@ export default function App() {
   const [destination, setDestination] = useState<{ lat: number; lng: number; name: string } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showHotspotDropdown, setShowHotspotDropdown] = useState(false);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
   
   // Real-time API carpark lists
   const [allCarparks, setAllCarparks] = useState<Carpark[]>([]);
@@ -44,6 +46,7 @@ export default function App() {
   const [selectedCarpark, setSelectedCarpark] = useState<Carpark | null>(null);
   const [showRoute, setShowRoute] = useState(false);
   const [routeInfo, setRouteInfo] = useState<{ distance: string; duration: string } | null>(null);
+  const [searchRadiusMeters, setSearchRadiusMeters] = useState(1500);
 
   // Active user alert subscriptions (persisted in localStorage)
   const [alerts, setAlerts] = useState<UserAlert[]>(() => {
@@ -56,6 +59,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"list" | "assistant" | "alerts">("list");
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [offlineMode, setOfflineMode] = useState(false);
 
   // Fetch real-time carpark availability data from our Express server proxy
   const fetchCarparkData = async () => {
@@ -126,6 +130,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("sg_carpark_alerts", JSON.stringify(alerts));
   }, [alerts]);
+
+  // Close the hotspot dropdown when clicking anywhere outside the search box
+  useEffect(() => {
+    if (!showHotspotDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchWrapperRef.current && !searchWrapperRef.current.contains(e.target as Node)) {
+        setShowHotspotDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showHotspotDropdown]);
 
   // Try to get actual user geolocation on load (fallback to City Hall if denied)
   useEffect(() => {
@@ -205,9 +221,9 @@ export default function App() {
           distance_meters: dist,
         };
       })
-      .filter((cp) => cp.distance_meters <= 1500) // within 1.5km radius of chosen spot
+      .filter((cp) => cp.distance_meters <= searchRadiusMeters)
       .sort((a, b) => (a.distance_meters || 0) - (b.distance_meters || 0));
-  }, [allCarparks, destination, userLocation]);
+  }, [allCarparks, destination, userLocation, searchRadiusMeters]);
 
   // Handle setting a Hotspot
   const handleSelectHotspot = (hotspot: typeof HOTSPOTS[0]) => {
@@ -221,6 +237,7 @@ export default function App() {
     setSelectedCarpark(null);
     setShowRoute(false);
     setRouteInfo(null);
+    setSearchRadiusMeters(1500);
     setActiveTab("list");
     addToast(`📍 Destination set: ${hotspot.name}. Analyzing nearby carparks.`, "success");
   };
@@ -252,13 +269,14 @@ export default function App() {
         setSelectedCarpark(null);
         setShowRoute(false);
         setRouteInfo(null);
+        setSearchRadiusMeters(1500);
         setActiveTab("list");
         addToast(`📍 Navigated to custom coordinates.`, "success");
         return;
       }
     }
 
-    addToast(`🔍 Searching for matches. Or select from the Popular landmarks list below!`, "info");
+    addToast(`🔍 No landmark match for "${searchQuery}" yet — free-text address search is still in development. Pick one from the list below, or paste coordinates as "lat, lng".`, "info");
     setShowHotspotDropdown(true);
   };
 
@@ -345,6 +363,7 @@ export default function App() {
     setSelectedCarpark(null);
     setShowRoute(false);
     setRouteInfo(null);
+    setSearchRadiusMeters(1500);
     addToast(`🚗 Simulated Driving: Position updated near ${randomSpot.name}!`, "info");
   };
 
@@ -392,6 +411,7 @@ export default function App() {
             disabled={loadingCarparks}
             className="p-2 bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-800 rounded-xl transition-all hover:bg-slate-200 disabled:opacity-50"
             title="Force refresh parking data"
+            aria-label="Refresh parking data"
           >
             <RefreshCw className={`w-4 h-4 ${loadingCarparks ? "animate-spin text-blue-600" : ""}`} />
           </button>
@@ -400,6 +420,7 @@ export default function App() {
             onClick={() => setSoundEnabled(!soundEnabled)}
             className="p-2 bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-800 rounded-xl transition-all hover:bg-slate-200"
             title={soundEnabled ? "Mute alert audio" : "Unmute alert audio"}
+            aria-label={soundEnabled ? "Mute alert audio" : "Unmute alert audio"}
           >
             {soundEnabled ? <Volume2 className="w-4 h-4 text-blue-600" /> : <VolumeX className="w-4 h-4 text-slate-400" />}
           </button>
@@ -408,6 +429,7 @@ export default function App() {
             onClick={() => setShowHelpModal(true)}
             className="p-2 bg-slate-100 border border-slate-200 text-slate-600 hover:text-slate-800 rounded-xl transition-all hover:bg-slate-200 flex items-center gap-1.5"
             title="Reference Guide"
+            aria-label="Open reference guide"
           >
             <HelpCircle className="w-4 h-4 text-blue-600 animate-pulse" />
             <span className="hidden sm:inline text-xs font-bold px-0.5">Reference Guide</span>
@@ -415,12 +437,29 @@ export default function App() {
 
           <button
             onClick={handleSimulateDrive}
-            className="hidden md:flex text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md shadow-blue-200 transition-all items-center gap-1.5"
+            aria-label="Simulate driving to a random landmark"
+            title="Simulate Driving"
+            className="flex text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-2.5 md:px-4 rounded-xl shadow-md shadow-blue-200 transition-all items-center gap-1.5"
           >
-            <Compass className="w-4 h-4" /> Simulate Driving
+            <Compass className="w-4 h-4" /> <span className="hidden md:inline">Simulate Driving</span>
           </button>
         </div>
       </header>
+
+      {/* Live data fetch error banner */}
+      {fetchError && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs font-semibold px-4 py-2 flex items-center justify-between gap-2 flex-shrink-0 z-30">
+          <span className="flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {fetchError}
+          </span>
+          <button
+            onClick={fetchCarparkData}
+            className="text-amber-900 underline underline-offset-2 hover:text-amber-950 flex-shrink-0"
+          >
+            Retry now
+          </button>
+        </div>
+      )}
 
       {/* Main Content Dashboard */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0 relative">
@@ -429,13 +468,13 @@ export default function App() {
         <aside className="w-full md:w-[420px] bg-white flex flex-col border-r border-slate-200 flex-shrink-0 z-20 min-h-0">
           
           {/* Main search input for places in Singapore */}
-          <div className="p-4 border-b border-slate-100 bg-white/90 backdrop-blur-md space-y-3">
+          <div className="p-4 border-b border-slate-100 bg-white/90 backdrop-blur-md space-y-3" ref={searchWrapperRef}>
             <form onSubmit={handleCustomSearchSubmit} className="relative">
               <div className="relative">
                 <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-blue-600" />
                 <input
                   type="text"
-                  placeholder="Search nearby Orchard Road..."
+                  placeholder="Search Singapore landmarks (e.g. Orchard Road)..."
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
@@ -454,9 +493,10 @@ export default function App() {
                       setShowRoute(false);
                       setRouteInfo(null);
                     }}
-                    className="absolute right-3 top-3.5 text-gray-400 hover:text-white"
+                    aria-label="Clear search"
+                    className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600"
                   >
-                    <AlertCircle className="w-4 h-4" />
+                    <X className="w-4 h-4" />
                   </button>
                 )}
               </div>
@@ -572,6 +612,8 @@ export default function App() {
                 destinationName={destination ? destination.name : null}
                 onSetAlert={handleToggleListAlert}
                 trackedAlertCarparkNumbers={trackedAlertNumbers}
+                searchRadiusMeters={searchRadiusMeters}
+                onExpandRadius={() => setSearchRadiusMeters((r) => Math.min(r + 1500, 6000))}
               />
             ) : activeTab === "assistant" ? (
               <SmartAssistant
@@ -619,6 +661,18 @@ export default function App() {
                 onRouteComputed={(info) => setRouteInfo(info)}
               />
             </APIProvider>
+          ) : offlineMode ? (
+            <OfflineMapPreview
+              userLocation={userLocation}
+              destination={destination}
+              carparks={processedNearbyCarparks}
+              selectedCarpark={selectedCarpark}
+              onSelectCarpark={(cp) => {
+                setSelectedCarpark(cp);
+                setShowRoute(true);
+                setRouteInfo(null);
+              }}
+            />
           ) : (
             /* Elegant Splash Screen explaining that GMP API key is required */
             <div className="w-full h-full bg-slate-100 flex flex-col items-center justify-center p-8 text-center space-y-6 text-slate-800">
@@ -630,7 +684,7 @@ export default function App() {
                   Google Maps Platform Key Required
                 </h2>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  To view interactive maps, plot real-time parking pins across Singapore, and render active route overlays, please provide your **Google Maps API Key**.
+                  To view interactive maps, plot real-time parking pins across Singapore, and render active route overlays, please provide your <strong>Google Maps API Key</strong>.
                 </p>
               </div>
 
@@ -639,19 +693,18 @@ export default function App() {
                   <ShieldAlert className="w-3.5 h-3.5 text-blue-600" /> Easy 1-Minute Setup Guide
                 </h4>
                 <ol className="text-[11px] text-slate-500 space-y-2 list-decimal list-inside leading-normal">
-                  <li>Navigate to the **Settings** menu at the top-right of AI Studio.</li>
-                  <li>Click on the **Secrets** tab inside settings.</li>
+                  <li>Navigate to the <strong>Settings</strong> menu at the top-right of AI Studio.</li>
+                  <li>Click on the <strong>Secrets</strong> tab inside settings.</li>
                   <li>Add a new secret key named: <code className="text-blue-600 font-mono bg-slate-50 px-1 py-0.5 rounded font-bold">GOOGLE_MAPS_PLATFORM_KEY</code></li>
                   <li>Paste your Google Maps API key as the value and save.</li>
                 </ol>
               </div>
 
-              {/* Provide interactive Offline Simulation Mode button */}
+              {/* Genuine offline schematic mode — no fake reload, just an honest lightweight fallback */}
               <button
                 onClick={() => {
-                  // Bypass key requirement by setting a mock key for UI presentation
-                  alert("Activating interactive offline simulator mode! Plotting simulated SG maps and mock directions.");
-                  location.reload();
+                  setOfflineMode(true);
+                  addToast("🗺️ Offline schematic preview activated — approximate positions, no live map imagery.", "info");
                 }}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-3 px-6 rounded-xl shadow-lg shadow-blue-100 transition-all"
               >
@@ -737,7 +790,8 @@ export default function App() {
               <div className="flex-1 text-xs font-semibold">{t.message}</div>
               <button
                 onClick={() => setToasts((prev) => prev.filter((toast) => toast.id !== t.id))}
-                className="text-gray-400 hover:text-white text-xs font-bold font-sans self-center"
+                aria-label="Dismiss notification"
+                className="text-gray-400 hover:text-gray-700 text-xs font-bold font-sans self-center"
               >
                 ✕
               </button>

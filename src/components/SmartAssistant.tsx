@@ -122,7 +122,7 @@ Once you search a location, I can compare rates, walking distances, and occupanc
             <h3 className="font-bold text-xs text-gray-900 leading-tight flex items-center gap-1.5">
               AI Parking Assistant
               <span className="bg-blue-100 text-blue-800 text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase">
-                Gemini 3.5
+                AI Powered
               </span>
             </h3>
             <p className="text-[11px] text-gray-500">Intelligent rates & occupancy guidance</p>

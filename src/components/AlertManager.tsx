@@ -172,11 +172,11 @@ export default function AlertManager({
                           // Simulate lot count update to trigger this alert
                           onTriggerAlertSimulated(alert.id, alert.target_lots_available + 5);
                         }}
-                        className="p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl transition-all border border-blue-100 flex items-center gap-1 text-[10px] font-bold"
-                        title="Trigger Simulated Lot Release to Test Alert"
+                        className="p-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-xl transition-all border border-amber-200 flex items-center gap-1 text-[10px] font-bold"
+                        title="Dev preview only: simulate a lot release to test this alert (not a real vacancy update)"
                       >
-                        <Play className="w-3 h-3 fill-blue-600 text-blue-600" />
-                        Test
+                        <Play className="w-3 h-3 fill-amber-600 text-amber-600" />
+                        Simulate (test)
                       </button>
                     )}
                     <button

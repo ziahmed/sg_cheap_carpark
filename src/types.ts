@@ -16,6 +16,12 @@ export interface Carpark {
   car_park_basement: string;
   agency: 'HDB' | 'LTA' | 'URA' | 'MALL';
   price_rate: string;
+  price_details?: {
+    weekday_day?: string;
+    weekday_night?: string;
+    weekend_day?: string;
+    weekend_night?: string;
+  };
   is_central: boolean;
   distance_meters?: number; // optionally computed on-demand
 }

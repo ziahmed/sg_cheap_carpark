@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Map, AdvancedMarker, Pin, InfoWindow, useMap, useMapsLibrary, useAdvancedMarkerRef } from "@vis.gl/react-google-maps";
 import { Carpark } from "../types.ts";
 import { MapPin, Navigation, Info, Car } from "lucide-react";
+import { getShortRateLabel, getActiveRate } from "../utils/pricing.ts";
 
 interface MapContainerProps {
   userLocation: { lat: number; lng: number };
@@ -114,11 +115,14 @@ function CarparkMarker({
   }, [isSelected]);
 
   // Determine Pin Colors based on real-time lot availability
-  const percentage = (carpark.lots_available / carpark.total_lots) * 100;
+  const hasLiveAvailability = carpark.total_lots > 0 && carpark.lots_available >= 0;
+  const percentage = hasLiveAvailability ? (carpark.lots_available / carpark.total_lots) * 100 : 0;
   let pinColor = "#10b981"; // Green (high availability)
   let glyphColor = "#ffffff";
 
-  if (carpark.lots_available === 0) {
+  if (!hasLiveAvailability) {
+    pinColor = "#64748b"; // Slate-500 (No live feed, Rates Only)
+  } else if (carpark.lots_available === 0) {
     pinColor = "#ef4444"; // Red (Full)
   } else if (carpark.lots_available < 15 || percentage < 15) {
     pinColor = "#f97316"; // Orange (Filling fast)
@@ -136,7 +140,7 @@ function CarparkMarker({
       >
         <Pin background={pinColor} glyphColor={glyphColor} scale={isSelected ? 1.2 : 1.0}>
           <div className="text-[10px] font-mono font-bold text-white px-1">
-            {carpark.lots_available}
+            {hasLiveAvailability ? carpark.lots_available : "$"}
           </div>
         </Pin>
       </AdvancedMarker>
@@ -153,18 +157,23 @@ function CarparkMarker({
               {carpark.address}
             </h4>
             <div className="space-y-1 text-xs">
-              <p className="flex justify-between">
+              <p className="flex justify-between gap-2">
                 <span className="text-gray-500">Available Lots:</span>
                 <span className="font-mono font-bold text-blue-600">
-                  {carpark.lots_available} / {carpark.total_lots}
+                  {hasLiveAvailability ? `${carpark.lots_available} / ${carpark.total_lots}` : "Live N/A (Rates Only)"}
                 </span>
               </p>
-              <p className="flex justify-between">
+              <p className="flex justify-between gap-1">
                 <span className="text-gray-500">Rate:</span>
-                <span className="font-semibold text-right">
-                  {carpark.agency === "MALL" ? "Mall Rates" : carpark.is_central ? "Central ($1.20/30m)" : "$0.60/30m"}
+                <span className="font-semibold text-right text-slate-700">
+                  {getShortRateLabel(carpark)}
                 </span>
               </p>
+              {carpark.agency === "MALL" && (
+                <p className="text-[10px] text-blue-600 bg-blue-50 px-1 py-0.5 rounded text-center font-semibold">
+                  Active Now: {getActiveRate(carpark).periodLabel}
+                </p>
+              )}
               {carpark.free_parking && carpark.free_parking !== "NO" && (
                 <p className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-medium mt-1 inline-block">
                   🎁 Free Sun/PH: {carpark.free_parking}
