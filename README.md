@@ -18,3 +18,6 @@ View your app in AI Studio: https://ai.studio/apps/e4919ff4-dfea-4617-b37a-7ecf8
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+###Singapore Carpark Prices and Free Carparks with Data.gov.sg DB, URA, Malls, Hotels, Parks. 
+
+Features like nearby distance cheapest and availability.
