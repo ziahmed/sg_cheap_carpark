@@ -55,16 +55,20 @@ async function loadCarparkMetadata() {
   try {
     console.log("Loading Singapore carpark static database from GitHub...");
     const response = await fetch(
-      "https://raw.githubusercontent.com/kimlimjustin/singapore-carpark-resource/main/carpark-data.json"
+      "https://raw.githubusercontent.com/MarkFull/sg-parking/master/data/raw/hdb.json"
     );
     if (!response.ok) {
       throw new Error(`HTTP Error fetching metadata: ${response.statusText}`);
     }
-    const data = (await response.json()) as Record<string, any>;
+    const data = (await response.json()) as { records?: any[] };
+    const records = data.records || [];
     
     // Compile coordinates for HDB carparks dynamically
     const compiled: Record<string, any> = {};
-    for (const [key, item] of Object.entries(data)) {
+    for (const item of records) {
+      const key = item.car_park_no;
+      if (!key) continue;
+
       if (item.x_coord && item.y_coord) {
         const x = parseFloat(item.x_coord);
         const y = parseFloat(item.y_coord);
