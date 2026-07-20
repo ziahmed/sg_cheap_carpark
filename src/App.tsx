@@ -1,13 +1,12 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import { APIProvider } from "@vis.gl/react-google-maps";
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { Carpark, UserAlert } from "./types.ts";
-import MapContainer from "./components/MapContainer.tsx";
-import OfflineMapPreview from "./components/OfflineMapPreview.tsx";
+const MapContainer = lazy(() => import("./components/MapContainer.tsx"));
+const OfflineMapPreview = lazy(() => import("./components/OfflineMapPreview.tsx"));
 import CarparkList from "./components/CarparkList.tsx";
 import AlertManager from "./components/AlertManager.tsx";
 import SmartAssistant from "./components/SmartAssistant.tsx";
 import ReferenceGuide from "./components/ReferenceGuide.tsx";
-import { MapPin, Navigation, Car, RefreshCw, AlertCircle, Volume2, VolumeX, Sparkles, Bell, HelpCircle, Compass, ShieldAlert, Check } from "lucide-react";
+import { MapPin, Navigation, Car, RefreshCw, AlertCircle, Volume2, VolumeX, Sparkles, Bell, HelpCircle, Compass, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 // 15 Key Singapore landmarks/hotspots for instant responsive searching and testing
@@ -242,10 +241,11 @@ export default function App() {
     addToast(`📍 Destination set: ${hotspot.name}. Analyzing nearby carparks.`, "success");
   };
 
-  // Handle typing custom coordinates or landmark search
-  const handleCustomSearchSubmit = (e: React.FormEvent) => {
+  // Handle typing custom coordinates, landmark search, or a free-text address (via Nominatim)
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const handleCustomSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() || isGeocoding) return;
 
     // Direct match against hotspots list
     const match = HOTSPOTS.find((h) => h.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -276,9 +276,37 @@ export default function App() {
       }
     }
 
-    addToast(`🔍 No landmark match for "${searchQuery}" yet — free-text address search is still in development. Pick one from the list below, or paste coordinates as "lat, lng".`, "info");
-    setShowHotspotDropdown(true);
+    // Fall back to free-text address search via our Nominatim proxy
+    setIsGeocoding(true);
+    setShowHotspotDropdown(false);
+    try {
+      const res = await fetch(`/api/geocode?q=${encodeURIComponent(searchQuery.trim())}`);
+      if (!res.ok) throw new Error("Geocoding request failed");
+      const results: { name: string; lat: number; lng: number }[] = await res.json();
+
+      if (results.length > 0) {
+        const best = results[0];
+        setDestination({ lat: best.lat, lng: best.lng, name: best.name });
+        setSearchQuery(best.name);
+        setSelectedCarpark(null);
+        setShowRoute(false);
+        setRouteInfo(null);
+        setSearchRadiusMeters(1500);
+        setActiveTab("list");
+        addToast(`📍 Found "${best.name}". Analyzing nearby carparks.`, "success");
+      } else {
+        addToast(`🔍 No address found for "${searchQuery}". Try a more specific address, or pick a landmark below.`, "info");
+        setShowHotspotDropdown(true);
+      }
+    } catch (err) {
+      console.error(err);
+      addToast(`⚠️ Address search is temporarily unavailable. Pick a landmark below, or paste coordinates as "lat, lng".`, "info");
+      setShowHotspotDropdown(true);
+    } finally {
+      setIsGeocoding(false);
+    }
   };
+
 
   // Setup Alert Subscription
   const handleAddAlert = (carpark: Carpark, threshold: number, priceChange: boolean) => {
@@ -372,7 +400,7 @@ export default function App() {
   }, [alerts]);
 
   // Handle checking if API key is provided
-  const apiKey = process.env.GOOGLE_MAPS_PLATFORM_KEY || "";
+
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-50 font-sans overflow-hidden text-slate-900">
@@ -474,16 +502,19 @@ export default function App() {
                 <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-blue-600" />
                 <input
                   type="text"
-                  placeholder="Search Singapore landmarks (e.g. Orchard Road)..."
+                  placeholder="Search an address or landmark (e.g. Orchard Road)..."
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
                     setShowHotspotDropdown(true);
                   }}
                   onFocus={() => setShowHotspotDropdown(true)}
-                  className="w-full pl-10 pr-10 py-3 text-xs bg-slate-100 border-none text-slate-800 placeholder-slate-400 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm font-medium"
+                  disabled={isGeocoding}
+                  className="w-full pl-10 pr-10 py-3 text-xs bg-slate-100 border-none text-slate-800 placeholder-slate-400 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm font-medium disabled:opacity-60"
                 />
-                {searchQuery && (
+                {isGeocoding ? (
+                  <RefreshCw className="absolute right-3 top-3.5 h-4 w-4 text-blue-600 animate-spin" />
+                ) : searchQuery ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -498,7 +529,7 @@ export default function App() {
                   >
                     <X className="w-4 h-4" />
                   </button>
-                )}
+                ) : null}
               </div>
 
               {/* Hotspots Dropdown */}
@@ -645,8 +676,27 @@ export default function App() {
 
         {/* Map Stage Panel */}
         <main className="flex-1 h-full relative z-10">
-          {apiKey ? (
-            <APIProvider apiKey={apiKey}>
+          <Suspense
+            fallback={
+              <div className="w-full h-full bg-slate-100 flex flex-col items-center justify-center gap-3 text-slate-400">
+                <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
+                <span className="text-xs font-semibold">Loading map…</span>
+              </div>
+            }
+          >
+            {offlineMode ? (
+              <OfflineMapPreview
+                userLocation={userLocation}
+                destination={destination}
+                carparks={processedNearbyCarparks}
+                selectedCarpark={selectedCarpark}
+                onSelectCarpark={(cp) => {
+                  setSelectedCarpark(cp);
+                  setShowRoute(true);
+                  setRouteInfo(null);
+                }}
+              />
+            ) : (
               <MapContainer
                 userLocation={userLocation}
                 destination={destination}
@@ -660,58 +710,26 @@ export default function App() {
                 showRoute={showRoute}
                 onRouteComputed={(info) => setRouteInfo(info)}
               />
-            </APIProvider>
-          ) : offlineMode ? (
-            <OfflineMapPreview
-              userLocation={userLocation}
-              destination={destination}
-              carparks={processedNearbyCarparks}
-              selectedCarpark={selectedCarpark}
-              onSelectCarpark={(cp) => {
-                setSelectedCarpark(cp);
-                setShowRoute(true);
-                setRouteInfo(null);
-              }}
-            />
-          ) : (
-            /* Elegant Splash Screen explaining that GMP API key is required */
-            <div className="w-full h-full bg-slate-100 flex flex-col items-center justify-center p-8 text-center space-y-6 text-slate-800">
-              <div className="bg-blue-600/10 border border-blue-500/20 p-5 rounded-full text-blue-600 animate-pulse shadow-lg shadow-blue-100/50">
-                <Car className="w-12 h-12" />
-              </div>
-              <div className="max-w-md space-y-3">
-                <h2 className="text-xl font-bold uppercase tracking-tight text-slate-800">
-                  Google Maps Platform Key Required
-                </h2>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  To view interactive maps, plot real-time parking pins across Singapore, and render active route overlays, please provide your <strong>Google Maps API Key</strong>.
-                </p>
-              </div>
+            )}
+          </Suspense>
 
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 max-w-sm text-left space-y-3 shadow-md">
-                <h4 className="text-[11px] font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
-                  <ShieldAlert className="w-3.5 h-3.5 text-blue-600" /> Easy 1-Minute Setup Guide
-                </h4>
-                <ol className="text-[11px] text-slate-500 space-y-2 list-decimal list-inside leading-normal">
-                  <li>Navigate to the <strong>Settings</strong> menu at the top-right of AI Studio.</li>
-                  <li>Click on the <strong>Secrets</strong> tab inside settings.</li>
-                  <li>Add a new secret key named: <code className="text-blue-600 font-mono bg-slate-50 px-1 py-0.5 rounded font-bold">GOOGLE_MAPS_PLATFORM_KEY</code></li>
-                  <li>Paste your Google Maps API key as the value and save.</li>
-                </ol>
-              </div>
-
-              {/* Genuine offline schematic mode — no fake reload, just an honest lightweight fallback */}
-              <button
-                onClick={() => {
-                  setOfflineMode(true);
-                  addToast("🗺️ Offline schematic preview activated — approximate positions, no live map imagery.", "info");
-                }}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-3 px-6 rounded-xl shadow-lg shadow-blue-100 transition-all"
-              >
-                Launch Offline Simulator View
-              </button>
-            </div>
-          )}
+          {/* Manual toggle between the live map and the lightweight offline schematic —
+              useful when tiles/routing are unreachable (e.g. no internet), since MapLibre
+              still needs network access to load tiles even though it needs no API key. */}
+          <button
+            onClick={() => {
+              setOfflineMode((prev) => !prev);
+              addToast(
+                offlineMode
+                  ? "🗺️ Switched back to the live map."
+                  : "🗺️ Offline schematic preview activated — approximate positions, no live map imagery.",
+                "info"
+              );
+            }}
+            className="absolute top-4 right-4 z-20 bg-white/95 backdrop-blur-md border border-slate-200 shadow-md text-[10px] font-bold text-slate-600 hover:text-slate-800 hover:bg-white px-2.5 py-1.5 rounded-lg transition-all"
+          >
+            {offlineMode ? "Switch to Live Map" : "Offline Schematic View"}
+          </button>
 
           {/* Active Directions Summary Overlay Card */}
           {selectedCarpark && showRoute && routeInfo && (

@@ -9,7 +9,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Initialize SVY21 converter
 const svy21Converter = new SVY21();
@@ -639,6 +639,128 @@ app.get("/api/carparks", async (req, res) => {
     console.error("Error in /api/carparks:", error);
     // Return empty array or fallback standard set in case of APIs errors
     res.status(500).json({ error: error.message || "Failed to retrieve real-time carpark list" });
+  }
+});
+
+// GET /api/geocode?q=<free text query>
+// Proxies OpenStreetMap Nominatim so the browser doesn't need to set a custom
+// User-Agent (which browsers block) and so we can respect Nominatim's usage
+// policy (max ~1 req/sec, identify the app) from a single server process.
+let lastNominatimCallAt = 0;
+app.get("/api/geocode", async (req, res) => {
+  const query = (req.query.q as string || "").trim();
+  if (!query) {
+    return res.status(400).json({ error: "Query parameter 'q' is required" });
+  }
+
+  // Simple in-process throttle to stay within Nominatim's fair-use policy
+  const now = Date.now();
+  const waitMs = Math.max(0, 1100 - (now - lastNominatimCallAt));
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  lastNominatimCallAt = Date.now();
+
+  try {
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("limit", "5");
+    // Bias/clip results to Singapore's bounding box
+    url.searchParams.set("viewbox", "103.55,1.50,104.15,1.15");
+    url.searchParams.set("bounded", "1");
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        // Nominatim's usage policy requires a descriptive User-Agent or Referer
+        "User-Agent": `sg-cheap-carpark/1.0 (${process.env.APP_URL || "https://github.com/ziahmed/sg_cheap_carpark"})`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Nominatim returned status ${response.status}`);
+    }
+
+    const results: any[] = await response.json();
+    res.json(
+      results.map((r) => ({
+        name: r.display_name as string,
+        lat: parseFloat(r.lat),
+        lng: parseFloat(r.lon),
+      }))
+    );
+  } catch (error: any) {
+    console.error("Error in /api/geocode:", error);
+    res.status(502).json({ error: "Address search is temporarily unavailable. Please try a listed landmark instead." });
+  }
+});
+
+// GET /api/route?originLat=&originLng=&destLat=&destLng=
+// Proxies OpenRouteService (free tier, requires ORS_API_KEY) for a driving
+// route as GeoJSON, with a graceful fallback to the public OSRM demo server
+// if no ORS key is configured (handy for local dev, not recommended for prod).
+app.get("/api/route", async (req, res) => {
+  const originLat = parseFloat(req.query.originLat as string);
+  const originLng = parseFloat(req.query.originLng as string);
+  const destLat = parseFloat(req.query.destLat as string);
+  const destLng = parseFloat(req.query.destLng as string);
+
+  if ([originLat, originLng, destLat, destLng].some((v) => isNaN(v))) {
+    return res.status(400).json({ error: "originLat, originLng, destLat, destLng are all required" });
+  }
+
+  try {
+    if (process.env.ORS_API_KEY) {
+      const orsResponse = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: process.env.ORS_API_KEY,
+        },
+        body: JSON.stringify({
+          coordinates: [
+            [originLng, originLat],
+            [destLng, destLat],
+          ],
+        }),
+      });
+
+      if (!orsResponse.ok) {
+        throw new Error(`OpenRouteService returned status ${orsResponse.status}`);
+      }
+
+      const data: any = await orsResponse.json();
+      const feature = data.features?.[0];
+      if (!feature) throw new Error("OpenRouteService returned no route");
+
+      const summary = feature.properties?.summary || {};
+      return res.json({
+        geometry: feature.geometry, // GeoJSON LineString
+        distanceMeters: summary.distance || 0,
+        durationSeconds: summary.duration || 0,
+        provider: "openrouteservice",
+      });
+    }
+
+    // Fallback: public OSRM demo server (no key needed, not for heavy production use)
+    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${originLng},${originLat};${destLng},${destLat}?overview=full&geometries=geojson`;
+    const osrmResponse = await fetch(osrmUrl);
+    if (!osrmResponse.ok) {
+      throw new Error(`OSRM demo server returned status ${osrmResponse.status}`);
+    }
+    const osrmData: any = await osrmResponse.json();
+    const route = osrmData.routes?.[0];
+    if (!route) throw new Error("OSRM returned no route");
+
+    res.json({
+      geometry: route.geometry,
+      distanceMeters: route.distance || 0,
+      durationSeconds: route.duration || 0,
+      provider: "osrm-demo",
+    });
+  } catch (error: any) {
+    console.error("Error in /api/route:", error);
+    res.status(502).json({ error: "Driving directions are temporarily unavailable." });
   }
 });
 
