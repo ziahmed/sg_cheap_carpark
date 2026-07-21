@@ -52,6 +52,8 @@ az webapp config appsettings set \
   --settings \
     GEMINI_API_KEY="your-gemini-api-key" \
     ORS_API_KEY="your-openrouteservice-key-or-leave-blank" \
+    ONEMAP_EMAIL="your-onemap-account-email-or-leave-blank" \
+    ONEMAP_PASSWORD="your-onemap-account-password-or-leave-blank" \
     APP_URL="https://$WEBAPP_NAME.azurewebsites.net" \
     SCM_DO_BUILD_DURING_DEPLOYMENT=false \
     WEBSITE_NODE_DEFAULT_VERSION="20-lts"

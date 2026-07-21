@@ -659,10 +659,106 @@ function isOverlyBroadResult(r: any): boolean {
   return false;
 }
 
+// --- OneMap (Singapore Land Authority) geocoding ---
+// OneMap is Singapore's official national map, built directly from
+// government address data. It has far better postal-code-level coverage
+// for Singapore than OpenStreetMap/Nominatim, so it's tried first below.
+// Requires a free account (ONEMAP_EMAIL/ONEMAP_PASSWORD) — if unset, the
+// app transparently falls back to Nominatim only, so this is optional.
+let oneMapTokenCache: { value: string; expiresAt: number } | null = null;
+
+async function getOneMapToken(): Promise<string | null> {
+  const email = process.env.ONEMAP_EMAIL;
+  const password = process.env.ONEMAP_PASSWORD;
+  if (!email || !password) return null; // Not configured — caller falls back to Nominatim
+
+  const now = Date.now();
+  if (oneMapTokenCache && oneMapTokenCache.expiresAt > now + 60_000) {
+    return oneMapTokenCache.value;
+  }
+
+  try {
+    const response = await fetch("https://www.onemap.gov.sg/api/auth/post/getToken", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!response.ok) {
+      console.error("OneMap token request failed with status:", response.status);
+      return null;
+    }
+    const data: any = await response.json();
+    if (!data.access_token) return null;
+
+    // Tokens are valid ~3 days; cache until shortly before expiry so we
+    // don't re-authenticate on every single geocode request.
+    const expiryMs = Number(data.expiry_timestamp) * 1000;
+    oneMapTokenCache = {
+      value: data.access_token,
+      expiresAt: !isNaN(expiryMs) && expiryMs > now ? expiryMs : now + 2.5 * 24 * 60 * 60 * 1000,
+    };
+    return oneMapTokenCache.value;
+  } catch (error) {
+    console.error("Error fetching OneMap token:", error);
+    return null;
+  }
+}
+
+interface GeocodeResult {
+  name: string;
+  lat: number;
+  lng: number;
+  postal: string;
+}
+
+async function searchOneMap(query: string): Promise<GeocodeResult[]> {
+  const token = await getOneMapToken();
+  if (!token) return [];
+
+  try {
+    const url = new URL("https://www.onemap.gov.sg/api/common/elastic/search");
+    url.searchParams.set("searchVal", query);
+    url.searchParams.set("returnGeom", "Y");
+    url.searchParams.set("getAddrDetails", "Y");
+    url.searchParams.set("pageNum", "1");
+
+    const response = await fetch(url.toString(), {
+      headers: { Authorization: token },
+    });
+
+    if (response.status === 401) {
+      // Token expired/invalid despite our cache bookkeeping — clear it so
+      // the next request re-authenticates instead of repeatedly failing.
+      oneMapTokenCache = null;
+      return [];
+    }
+    if (!response.ok) {
+      console.error("OneMap search failed with status:", response.status);
+      return [];
+    }
+
+    const data: any = await response.json();
+    const results: any[] = data.results || [];
+
+    return results
+      .map((r: any) => ({
+        name: r.ADDRESS || [r.BLK_NO, r.ROAD_NAME, r.BUILDING].filter(Boolean).join(" ").trim(),
+        lat: parseFloat(r.LATITUDE),
+        lng: parseFloat(r.LONGITUDE),
+        postal: (r.POSTAL || "").trim(),
+      }))
+      .filter((r) => r.name && !isNaN(r.lat) && !isNaN(r.lng));
+  } catch (error) {
+    console.error("Error querying OneMap search:", error);
+    return [];
+  }
+}
+
 // GET /api/geocode?q=<free text query, or a 6-digit Singapore postal code>
-// Proxies OpenStreetMap Nominatim so the browser doesn't need to set a custom
-// User-Agent (which browsers block) and so we can respect Nominatim's usage
-// policy (max ~1 req/sec, identify the app) from a single server process.
+// Tries OneMap (SLA's authoritative Singapore address data) first, then
+// falls back to OpenStreetMap Nominatim — proxied server-side either way so
+// the browser doesn't need custom headers and Nominatim's ~1 req/sec fair
+// use policy is respected from a single process.
 let lastNominatimCallAt = 0;
 app.get("/api/geocode", async (req, res) => {
   const query = (req.query.q as string || "").trim();
@@ -670,15 +766,31 @@ app.get("/api/geocode", async (req, res) => {
     return res.status(400).json({ error: "Query parameter 'q' is required" });
   }
 
-  // Simple in-process throttle to stay within Nominatim's fair-use policy
-  const now = Date.now();
-  const waitMs = Math.max(0, 1100 - (now - lastNominatimCallAt));
-  if (waitMs > 0) {
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
-  lastNominatimCallAt = Date.now();
+  const isPostalCode = /^\d{6}$/.test(query);
 
   try {
+    // 1. Try OneMap first (no-op if ONEMAP_EMAIL/ONEMAP_PASSWORD aren't set)
+    const oneMapResults = await searchOneMap(query);
+    if (oneMapResults.length > 0) {
+      // For postal code searches specifically, only trust a result whose
+      // own postal field exactly matches — OneMap's elastic search can
+      // still return nearby/fuzzy matches for a query it can't resolve
+      // precisely, and a "close but wrong" postal code match is worse
+      // than an honest "not found".
+      const filtered = isPostalCode ? oneMapResults.filter((r) => r.postal === query) : oneMapResults;
+      if (filtered.length > 0) {
+        return res.json(filtered.slice(0, 5).map(({ name, lat, lng }) => ({ name, lat, lng })));
+      }
+    }
+
+    // 2. Fall back to Nominatim — either OneMap isn't configured, or it had no match
+    const now = Date.now();
+    const waitMs = Math.max(0, 1100 - (now - lastNominatimCallAt));
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    lastNominatimCallAt = Date.now();
+
     const url = new URL("https://nominatim.openstreetmap.org/search");
     url.searchParams.set("format", "jsonv2");
     url.searchParams.set("limit", "5");
@@ -689,7 +801,6 @@ app.get("/api/geocode", async (req, res) => {
     // search resolves these poorly/inconsistently, so route bare postal
     // codes through the structured `postalcode` param instead, which is
     // far more reliable for this specific case.
-    const isPostalCode = /^\d{6}$/.test(query);
     if (isPostalCode) {
       url.searchParams.set("postalcode", query);
       url.searchParams.set("country", "Singapore");
@@ -715,11 +826,10 @@ app.get("/api/geocode", async (req, res) => {
 
     if (isPostalCode) {
       // Singapore postal codes are precise to an individual building, so a
-      // "close but not exact" match is not a trustworthy substitute — it's
-      // exactly how a search for a real postcode with no OSM tagging could
-      // previously end up silently resolving to some unrelated place (or, at
-      // worst, Singapore's own country-level entry). If nothing has this
-      // exact postcode, we report no results rather than guessing.
+      // "close but not exact" match is not a trustworthy substitute — if
+      // nothing has this exact postcode, report no results rather than
+      // guessing (this is what previously caused searches to silently land
+      // on the wrong place, including Singapore's own country-level entry).
       results = results.filter((r) => r.address?.postcode === query);
     } else {
       // Free-text address/landmark searches also shouldn't resolve to the

@@ -14,7 +14,7 @@ View your app in AI Studio: https://ai.studio/apps/e4919ff4-dfea-4617-b37a-7ecf8
 ## Stack
 
 - **Map & tiles**: [MapLibre GL JS](https://maplibre.org/) via `react-map-gl`, tiles served free by [OpenFreeMap](https://openfreemap.org) — no API key, no billing account required.
-- **Geocoding**: [OpenStreetMap Nominatim](https://nominatim.org/), proxied through the server.
+- **Geocoding**: [OneMap](https://www.onemap.gov.sg/) (Singapore Land Authority's official geocoder, if configured) with [OpenStreetMap Nominatim](https://nominatim.org/) as a fallback — both proxied through the server.
 - **Driving directions**: [OpenRouteService](https://openrouteservice.org) (free tier), with an automatic fallback to the public OSRM demo server if no key is configured.
 - **AI Advisor**: Google Gemini, via `@google/genai`.
 - **Live carpark data**: [data.gov.sg](https://data.gov.sg) carpark availability API + HDB static carpark info + a curated list of private mall carparks with time-based pricing.
