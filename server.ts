@@ -714,45 +714,16 @@ app.get("/api/geocode", async (req, res) => {
     let results: any[] = await response.json();
 
     if (isPostalCode) {
-      // For an exact postal code search, only trust results whose own
-      // postcode field actually matches what was typed — otherwise a
-      // "closest guess" match (or, worse, the whole country) can slip
-      // through as if it were the real address.
-      const exactMatches = results.filter((r) => r.address?.postcode === query);
-      results = exactMatches.length > 0 ? exactMatches : results.filter((r) => !isOverlyBroadResult(r));
-
-      // Structured postcode search occasionally returns nothing for postal
-      // codes with sparse OSM tagging — fall back to a free-text search
-      // (e.g. "530123 Singapore") before giving up entirely.
-      if (results.length === 0) {
-        const fallbackUrl = new URL("https://nominatim.openstreetmap.org/search");
-        fallbackUrl.searchParams.set("format", "jsonv2");
-        fallbackUrl.searchParams.set("limit", "5");
-        fallbackUrl.searchParams.set("countrycodes", "sg");
-        fallbackUrl.searchParams.set("addressdetails", "1");
-        fallbackUrl.searchParams.set("q", `${query} Singapore`);
-        fallbackUrl.searchParams.set("viewbox", "103.55,1.50,104.15,1.15");
-        fallbackUrl.searchParams.set("bounded", "1");
-
-        const fallbackResponse = await fetch(fallbackUrl.toString(), {
-          headers: {
-            "User-Agent": `sg-cheap-carpark/1.0 (${process.env.APP_URL || "https://github.com/ziahmed/sg_cheap_carpark"})`,
-          },
-        });
-        if (fallbackResponse.ok) {
-          const fallbackResults: any[] = await fallbackResponse.json();
-          // Same guard here — reject a fallback match that's just "Singapore"
-          // the country/city rather than the actual postal code location.
-          const exactFallbackMatches = fallbackResults.filter((r) => r.address?.postcode === query);
-          results = exactFallbackMatches.length > 0
-            ? exactFallbackMatches
-            : fallbackResults.filter((r) => !isOverlyBroadResult(r));
-        }
-      }
+      // Singapore postal codes are precise to an individual building, so a
+      // "close but not exact" match is not a trustworthy substitute — it's
+      // exactly how a search for a real postcode with no OSM tagging could
+      // previously end up silently resolving to some unrelated place (or, at
+      // worst, Singapore's own country-level entry). If nothing has this
+      // exact postcode, we report no results rather than guessing.
+      results = results.filter((r) => r.address?.postcode === query);
     } else {
       // Free-text address/landmark searches also shouldn't resolve to the
-      // whole country as a "match" — filter the same way, just without the
-      // exact-postcode requirement (which doesn't apply to non-postcode text).
+      // whole country as a "match".
       results = results.filter((r) => !isOverlyBroadResult(r));
     }
 
