@@ -642,7 +642,7 @@ app.get("/api/carparks", async (req, res) => {
   }
 });
 
-// GET /api/geocode?q=<free text query>
+// GET /api/geocode?q=<free text query, or a 6-digit Singapore postal code>
 // Proxies OpenStreetMap Nominatim so the browser doesn't need to set a custom
 // User-Agent (which browsers block) and so we can respect Nominatim's usage
 // policy (max ~1 req/sec, identify the app) from a single server process.
@@ -663,12 +663,24 @@ app.get("/api/geocode", async (req, res) => {
 
   try {
     const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("q", query);
     url.searchParams.set("format", "jsonv2");
     url.searchParams.set("limit", "5");
-    // Bias/clip results to Singapore's bounding box
-    url.searchParams.set("viewbox", "103.55,1.50,104.15,1.15");
-    url.searchParams.set("bounded", "1");
+    url.searchParams.set("countrycodes", "sg");
+
+    // Singapore postal codes are exactly 6 digits. Nominatim's free-text
+    // search resolves these poorly/inconsistently, so route bare postal
+    // codes through the structured `postalcode` param instead, which is
+    // far more reliable for this specific case.
+    const isPostalCode = /^\d{6}$/.test(query);
+    if (isPostalCode) {
+      url.searchParams.set("postalcode", query);
+      url.searchParams.set("country", "Singapore");
+    } else {
+      url.searchParams.set("q", query);
+      // Bias/clip free-text results to Singapore's bounding box
+      url.searchParams.set("viewbox", "103.55,1.50,104.15,1.15");
+      url.searchParams.set("bounded", "1");
+    }
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -681,7 +693,30 @@ app.get("/api/geocode", async (req, res) => {
       throw new Error(`Nominatim returned status ${response.status}`);
     }
 
-    const results: any[] = await response.json();
+    let results: any[] = await response.json();
+
+    // Structured postcode search occasionally returns nothing for postal
+    // codes with sparse OSM tagging — fall back to a free-text search
+    // (e.g. "530123 Singapore") before giving up entirely.
+    if (isPostalCode && results.length === 0) {
+      const fallbackUrl = new URL("https://nominatim.openstreetmap.org/search");
+      fallbackUrl.searchParams.set("format", "jsonv2");
+      fallbackUrl.searchParams.set("limit", "5");
+      fallbackUrl.searchParams.set("countrycodes", "sg");
+      fallbackUrl.searchParams.set("q", `${query} Singapore`);
+      fallbackUrl.searchParams.set("viewbox", "103.55,1.50,104.15,1.15");
+      fallbackUrl.searchParams.set("bounded", "1");
+
+      const fallbackResponse = await fetch(fallbackUrl.toString(), {
+        headers: {
+          "User-Agent": `sg-cheap-carpark/1.0 (${process.env.APP_URL || "https://github.com/ziahmed/sg_cheap_carpark"})`,
+        },
+      });
+      if (fallbackResponse.ok) {
+        results = await fallbackResponse.json();
+      }
+    }
+
     res.json(
       results.map((r) => ({
         name: r.display_name as string,

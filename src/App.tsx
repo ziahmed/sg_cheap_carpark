@@ -502,7 +502,7 @@ export default function App() {
                 <MapPin className="absolute left-3.5 top-3.5 h-4 w-4 text-blue-600" />
                 <input
                   type="text"
-                  placeholder="Search an address or landmark (e.g. Orchard Road)..."
+                  placeholder="Search address, landmark, or postal code (e.g. 238859)..."
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
