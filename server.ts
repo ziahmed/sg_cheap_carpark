@@ -642,6 +642,23 @@ app.get("/api/carparks", async (req, res) => {
   }
 });
 
+// Discards results that are too broad to be a useful location for this app —
+// e.g. a search for a specific postal code should never resolve to "Singapore"
+// the country/city itself (which Nominatim centers near the Padang), since
+// that's not a usable navigation destination.
+function isOverlyBroadResult(r: any): boolean {
+  const broadTypes = new Set(["country", "administrative", "city", "state", "island"]);
+  if (r.type && broadTypes.has(r.type)) return true;
+  if (r.class === "boundary" || r.class === "place") {
+    // "place"/"boundary" results can still be legitimate (e.g. a named
+    // neighbourhood), but reject ones with a very low place_rank, which
+    // indicates a large administrative area rather than a specific spot.
+    const rank = Number(r.place_rank);
+    if (!isNaN(rank) && rank <= 12) return true;
+  }
+  return false;
+}
+
 // GET /api/geocode?q=<free text query, or a 6-digit Singapore postal code>
 // Proxies OpenStreetMap Nominatim so the browser doesn't need to set a custom
 // User-Agent (which browsers block) and so we can respect Nominatim's usage
@@ -666,6 +683,7 @@ app.get("/api/geocode", async (req, res) => {
     url.searchParams.set("format", "jsonv2");
     url.searchParams.set("limit", "5");
     url.searchParams.set("countrycodes", "sg");
+    url.searchParams.set("addressdetails", "1");
 
     // Singapore postal codes are exactly 6 digits. Nominatim's free-text
     // search resolves these poorly/inconsistently, so route bare postal
@@ -695,26 +713,47 @@ app.get("/api/geocode", async (req, res) => {
 
     let results: any[] = await response.json();
 
-    // Structured postcode search occasionally returns nothing for postal
-    // codes with sparse OSM tagging — fall back to a free-text search
-    // (e.g. "530123 Singapore") before giving up entirely.
-    if (isPostalCode && results.length === 0) {
-      const fallbackUrl = new URL("https://nominatim.openstreetmap.org/search");
-      fallbackUrl.searchParams.set("format", "jsonv2");
-      fallbackUrl.searchParams.set("limit", "5");
-      fallbackUrl.searchParams.set("countrycodes", "sg");
-      fallbackUrl.searchParams.set("q", `${query} Singapore`);
-      fallbackUrl.searchParams.set("viewbox", "103.55,1.50,104.15,1.15");
-      fallbackUrl.searchParams.set("bounded", "1");
+    if (isPostalCode) {
+      // For an exact postal code search, only trust results whose own
+      // postcode field actually matches what was typed — otherwise a
+      // "closest guess" match (or, worse, the whole country) can slip
+      // through as if it were the real address.
+      const exactMatches = results.filter((r) => r.address?.postcode === query);
+      results = exactMatches.length > 0 ? exactMatches : results.filter((r) => !isOverlyBroadResult(r));
 
-      const fallbackResponse = await fetch(fallbackUrl.toString(), {
-        headers: {
-          "User-Agent": `sg-cheap-carpark/1.0 (${process.env.APP_URL || "https://github.com/ziahmed/sg_cheap_carpark"})`,
-        },
-      });
-      if (fallbackResponse.ok) {
-        results = await fallbackResponse.json();
+      // Structured postcode search occasionally returns nothing for postal
+      // codes with sparse OSM tagging — fall back to a free-text search
+      // (e.g. "530123 Singapore") before giving up entirely.
+      if (results.length === 0) {
+        const fallbackUrl = new URL("https://nominatim.openstreetmap.org/search");
+        fallbackUrl.searchParams.set("format", "jsonv2");
+        fallbackUrl.searchParams.set("limit", "5");
+        fallbackUrl.searchParams.set("countrycodes", "sg");
+        fallbackUrl.searchParams.set("addressdetails", "1");
+        fallbackUrl.searchParams.set("q", `${query} Singapore`);
+        fallbackUrl.searchParams.set("viewbox", "103.55,1.50,104.15,1.15");
+        fallbackUrl.searchParams.set("bounded", "1");
+
+        const fallbackResponse = await fetch(fallbackUrl.toString(), {
+          headers: {
+            "User-Agent": `sg-cheap-carpark/1.0 (${process.env.APP_URL || "https://github.com/ziahmed/sg_cheap_carpark"})`,
+          },
+        });
+        if (fallbackResponse.ok) {
+          const fallbackResults: any[] = await fallbackResponse.json();
+          // Same guard here — reject a fallback match that's just "Singapore"
+          // the country/city rather than the actual postal code location.
+          const exactFallbackMatches = fallbackResults.filter((r) => r.address?.postcode === query);
+          results = exactFallbackMatches.length > 0
+            ? exactFallbackMatches
+            : fallbackResults.filter((r) => !isOverlyBroadResult(r));
+        }
       }
+    } else {
+      // Free-text address/landmark searches also shouldn't resolve to the
+      // whole country as a "match" — filter the same way, just without the
+      // exact-postcode requirement (which doesn't apply to non-postcode text).
+      results = results.filter((r) => !isOverlyBroadResult(r));
     }
 
     res.json(
