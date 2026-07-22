@@ -26,6 +26,23 @@ const ai = new GoogleGenAI({
 
 app.use(express.json());
 
+// Minimal CORS support: this API is called from two contexts —
+// 1. The web frontend, served from the same origin (no CORS needed there)
+// 2. The iOS/Android app (via Capacitor), which loads from a different
+//    origin (e.g. capacitor://localhost) and therefore needs explicit
+//    cross-origin permission to call this backend.
+// This app has no user accounts/cookies, so a permissive origin is a
+// reasonable tradeoff here rather than maintaining an allow-list.
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 // In-memory cache for HDB carpark static metadata
 let hdbCarparkMetadataCache: Record<string, any> = {};
 let cacheLoaded = false;

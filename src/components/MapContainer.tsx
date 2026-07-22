@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Map, Marker, Popup, NavigationControl, GeolocateControl, Source, Layer } from "react-map-gl/maplibre";
 import type { MapRef } from "react-map-gl/maplibre";
 import { Carpark } from "../types.ts";
+import { apiUrl } from "../utils/api.ts";
 import { MapPin, Navigation, Car } from "lucide-react";
 import { getShortRateLabel, getActiveRate } from "../utils/pricing.ts";
 
@@ -184,7 +185,7 @@ export default function MapContainer({
       destLng: String(selectedCarpark.lng),
     });
 
-    fetch(`/api/route?${params.toString()}`)
+    fetch(apiUrl(`/api/route?${params.toString()}`))
       .then((res) => {
         if (!res.ok) throw new Error("Route request failed");
         return res.json();

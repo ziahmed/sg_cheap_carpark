@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { Carpark, UserAlert } from "./types.ts";
+import { apiUrl } from "./utils/api.ts";
 const MapContainer = lazy(() => import("./components/MapContainer.tsx"));
 const OfflineMapPreview = lazy(() => import("./components/OfflineMapPreview.tsx"));
 import CarparkList from "./components/CarparkList.tsx";
@@ -65,7 +66,7 @@ export default function App() {
     setLoadingCarparks(true);
     setFetchError(null);
     try {
-      const res = await fetch("/api/carparks");
+      const res = await fetch(apiUrl("/api/carparks"));
       if (!res.ok) {
         throw new Error(`Failed to load parking feed: ${res.statusText}`);
       }
@@ -280,7 +281,7 @@ export default function App() {
     setIsGeocoding(true);
     setShowHotspotDropdown(false);
     try {
-      const res = await fetch(`/api/geocode?q=${encodeURIComponent(searchQuery.trim())}`);
+      const res = await fetch(apiUrl(`/api/geocode?q=${encodeURIComponent(searchQuery.trim())}`));
       if (!res.ok) throw new Error("Geocoding request failed");
       const results: { name: string; lat: number; lng: number }[] = await res.json();
 

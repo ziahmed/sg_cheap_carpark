@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Carpark, AssistantMessage } from "../types.ts";
+import { apiUrl } from "../utils/api.ts";
 import { Sparkles, MessageSquare, Send, Bot, RefreshCw, Car, ThumbsUp, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -70,7 +71,7 @@ Once you search a location, I can compare rates, walking distances, and occupanc
     ]);
 
     try {
-      const response = await fetch("/api/parking-assistant", {
+      const response = await fetch(apiUrl("/api/parking-assistant"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
