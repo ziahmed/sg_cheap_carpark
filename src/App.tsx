@@ -57,6 +57,13 @@ export default function App() {
   // Client-side Toast notification manager
   const [toasts, setToasts] = useState<{ id: string; message: string; type: "alert" | "success" | "info" }[]>([]);
   const [activeTab, setActiveTab] = useState<"list" | "assistant" | "alerts">("list");
+  // On narrow/mobile viewports, the sidebar and map can't sit side-by-side
+  // (no horizontal room), so instead of stacking them vertically — which
+  // let the sidebar's carpark list push the map fully off-screen with no
+  // way back to it — mobile gets an explicit full-screen toggle between the
+  // two. Desktop/tablet (md breakpoint and up) ignores this and always
+  // shows both panels side by side, as before.
+  const [mobileView, setMobileView] = useState<"list" | "map">("list");
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [offlineMode, setOfflineMode] = useState(false);
@@ -404,7 +411,7 @@ export default function App() {
 
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-50 font-sans overflow-hidden text-slate-900">
+    <div className="flex flex-col h-screen h-[100dvh] w-screen bg-slate-50 font-sans overflow-hidden text-slate-900">
       {/* Top Navigation Bar */}
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between flex-shrink-0 z-30 shadow-sm">
         <div className="flex items-center gap-3">
@@ -492,9 +499,30 @@ export default function App() {
 
       {/* Main Content Dashboard */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0 relative">
+
+        {/* Mobile-only floating toggle between List and Map full-screen views.
+            Hidden from md breakpoint up, where both panels sit side by side
+            and there's nothing to toggle between. */}
+        <button
+          onClick={() => setMobileView((v) => (v === "list" ? "map" : "list"))}
+          aria-label={mobileView === "list" ? "Show map" : "Show carpark list"}
+          className="md:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-40 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-5 py-3 rounded-full shadow-lg shadow-blue-900/30 flex items-center gap-2"
+        >
+          {mobileView === "list" ? (
+            <>
+              <MapPin className="w-4 h-4" /> View Map
+            </>
+          ) : (
+            <>
+              <Car className="w-4 h-4" /> View List
+            </>
+          )}
+        </button>
         
         {/* Sidebar Panel */}
-        <aside className="w-full md:w-[420px] bg-white flex flex-col border-r border-slate-200 flex-shrink-0 z-20 min-h-0">
+        <aside
+          className={`${mobileView === "list" ? "flex" : "hidden"} md:flex w-full md:w-[420px] bg-white flex-col border-r border-slate-200 flex-shrink-0 z-20 min-h-0`}
+        >
           
           {/* Main search input for places in Singapore */}
           <div className="p-4 border-b border-slate-100 bg-white/90 backdrop-blur-md space-y-3" ref={searchWrapperRef}>
@@ -640,6 +668,7 @@ export default function App() {
                   setSelectedCarpark(cp);
                   setShowRoute(true);
                   setRouteInfo(null);
+                  setMobileView("map");
                 }}
                 destinationName={destination ? destination.name : null}
                 onSetAlert={handleToggleListAlert}
@@ -657,6 +686,7 @@ export default function App() {
                     setSelectedCarpark(match);
                     setShowRoute(true);
                     setActiveTab("list");
+                    setMobileView("map");
                     addToast(`Selected ${match.address} for navigation.`, "info");
                   }
                 }}
@@ -676,7 +706,7 @@ export default function App() {
         </aside>
 
         {/* Map Stage Panel */}
-        <main className="flex-1 h-full relative z-10">
+        <main className={`${mobileView === "map" ? "block" : "hidden"} md:block flex-1 h-full relative z-10`}>
           <Suspense
             fallback={
               <div className="w-full h-full bg-slate-100 flex flex-col items-center justify-center gap-3 text-slate-400">
