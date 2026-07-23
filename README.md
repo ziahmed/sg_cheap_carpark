@@ -17,7 +17,7 @@ View your app in AI Studio: https://ai.studio/apps/e4919ff4-dfea-4617-b37a-7ecf8
 - **Geocoding**: [OneMap](https://www.onemap.gov.sg/) (Singapore Land Authority's official geocoder, if configured) with [OpenStreetMap Nominatim](https://nominatim.org/) as a fallback — both proxied through the server.
 - **Driving directions**: [OpenRouteService](https://openrouteservice.org) (free tier), with an automatic fallback to the public OSRM demo server if no key is configured.
 - **AI Advisor**: Google Gemini, via `@google/genai`.
-- **Live carpark data**: [data.gov.sg](https://data.gov.sg) carpark availability API + HDB static carpark info + a curated list of private mall carparks with time-based pricing.
+- **Live carpark data**: [data.gov.sg](https://data.gov.sg) carpark availability API + HDB static carpark info + URA's official Parking Places dataset (covers community clubs, government buildings, and other URA-regulated carparks) + a curated list of private mall carparks with time-based pricing.
 
 No Google Maps Platform key or Google Cloud billing account is required.
 

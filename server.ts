@@ -454,6 +454,20 @@ const MALL_COORDINATES: Record<
       weekend_night: "$3.00 for 1st 2 hrs, then $0.55 per 15 mins",
     },
   },
+  "cairnhill community club": {
+    lat: 1.3104,
+    lng: 103.8389,
+    name: "Cairnhill Community Club",
+    price: "Rate not verified in this app's database — check on-site signage or the OneService/URA MyTransport.SG app for current tariff.",
+    system: "Electronic",
+  },
+  "environment building": {
+    lat: 1.3105,
+    lng: 103.8362,
+    name: "Environment Building (40 Scotts Road)",
+    price: "Rate not verified in this app's database — check on-site signage or the OneService/URA MyTransport.SG app for current tariff.",
+    system: "Electronic",
+  },
 };
 
 // Start background task to fetch and compile Singapore's carpark metadata
@@ -501,6 +515,67 @@ async function loadCarparkMetadata() {
 }
 
 loadCarparkMetadata();
+
+// --- URA Parking Places (covers non-HDB, non-mall carparks) ---
+// The live LTA carpark-availability feed includes many URA-regulated
+// carparks (community clubs, government buildings, open-air lots, etc.)
+// identified only by a short code like "S0047" or "J0117" — with no name
+// or address included. Previously, any such carpark that wasn't in the
+// HDB static dataset AND didn't fuzzy-match one of the ~30 hand-curated
+// entries in MALL_COORDINATES was silently dropped from the results
+// entirely (e.g. Cairnhill Community Club, Environment Building). This
+// loads URA's own official "Capacity of URA Parking Places" dataset from
+// data.gov.sg, keyed by the same code (PP_CODE), to give those carparks a
+// real name and location instead of disappearing.
+let uraParkingPlacesCache: Record<string, { name: string; lat: number; lng: number }> = {};
+
+async function loadUraParkingPlaces() {
+  try {
+    console.log("Loading URA parking places dataset...");
+    const datasetId = "d_9bf8620ecfdc8a5f8f77e3f02160af5c";
+    const pollResponse = await fetch(
+      `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`
+    );
+    if (!pollResponse.ok) {
+      throw new Error(`Poll-download request failed with status ${pollResponse.status}`);
+    }
+    const pollData: any = await pollResponse.json();
+    const downloadUrl = pollData?.data?.url;
+    if (!downloadUrl) {
+      throw new Error("No download URL returned from data.gov.sg poll-download");
+    }
+
+    const geoJsonResponse = await fetch(downloadUrl);
+    if (!geoJsonResponse.ok) {
+      throw new Error(`GeoJSON download failed with status ${geoJsonResponse.status}`);
+    }
+    const geoJson: any = await geoJsonResponse.json();
+    const features: any[] = geoJson.features || [];
+
+    const compiled: Record<string, { name: string; lat: number; lng: number }> = {};
+    for (const feature of features) {
+      const props = feature.properties || {};
+      const code = props.PP_CODE;
+      const name = props.PARKING_PL;
+      const coords = feature.geometry?.coordinates;
+      if (!code || !name || !Array.isArray(coords) || coords.length < 2) continue;
+
+      // GeoJSON coordinates are [lng, lat]
+      const [lng, lat] = coords;
+      if (typeof lat !== "number" || typeof lng !== "number") continue;
+
+      compiled[code] = { name, lat, lng };
+    }
+
+    uraParkingPlacesCache = compiled;
+    console.log(`Successfully loaded ${Object.keys(compiled).length} URA parking places!`);
+  } catch (error) {
+    console.error("Failed to load URA parking places dataset: ", error);
+    console.log("Continuing without URA parking place enrichment — unmatched non-HDB, non-mall carparks will still be omitted, same as before this feature was added.");
+  }
+}
+
+loadUraParkingPlaces();
 
 // Helper to determine if a carpark is HDB Central Area
 function isCentralArea(carparkNumber: string, address: string): boolean {
@@ -620,6 +695,39 @@ app.get("/api/carparks", async (req, res) => {
             price_details: mall.price_details,
             is_central: true,
           });
+        } else {
+          // Not HDB, not a known mall — check URA's official parking
+          // places dataset before giving up on this carpark entirely.
+          const uraMatch = uraParkingPlacesCache[cpNum];
+          if (uraMatch) {
+            enrichedCarparks.push({
+              carpark_number: cpNum,
+              address: uraMatch.name,
+              lat: uraMatch.lat,
+              lng: uraMatch.lng,
+              total_lots: totalLots,
+              lots_available: lotsAvail,
+              lot_type: lotType,
+              update_datetime: updateTime,
+              car_park_type: "URA CAR PARK",
+              type_of_parking_system: "ELECTRONIC PARKING SYSTEM",
+              short_term_parking: "WHOLE DAY",
+              free_parking: "NO",
+              night_parking: "YES",
+              gantry_height: 0.0,
+              car_park_basement: "N",
+              agency: "URA",
+              // Unlike HDB (fixed, known tariff rules) or the hand-curated
+              // malls above (specific verified rates), this dataset only
+              // gives us the carpark's name/location — not its tariff. It
+              // would be misleading to guess a specific dollar figure here,
+              // so this is intentionally honest about what we don't know
+              // rather than reusing HDB's rate (which often doesn't apply
+              // to URA/private carparks) or fabricating a number.
+              price_rate: "Rate varies by location — check on-site signage or the URA MyTransport.SG app for current tariff.",
+              is_central: false,
+            });
+          }
         }
       }
     }
