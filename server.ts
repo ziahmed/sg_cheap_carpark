@@ -577,6 +577,83 @@ async function loadUraParkingPlaces() {
 
 loadUraParkingPlaces();
 
+// --- OSM/Overpass supplemental parking discovery ---
+// Even with HDB + URA + the curated mall list, some real carparks have no
+// presence in any Singapore government dataset at all — small private lots,
+// or buildings that manage their own parking without reporting it anywhere
+// centrally. Google Places could fill this gap, but it requires a Google
+// Cloud billing account — exactly the dependency this app was deliberately
+// migrated away from. Instead, this queries OpenStreetMap's free Overpass
+// API for named parking locations across Singapore, no key/billing needed,
+// consistent with the rest of this app's map stack (MapLibre/OpenFreeMap/
+// Nominatim are already OSM-based).
+//
+// Only NAMED parking nodes are kept — anonymous/unlabeled OSM parking dots
+// (there can be thousands) would flood the list with entries a user can't
+// actually identify or navigate to by name, so they're deliberately
+// excluded rather than shown as noise.
+let osmParkingCache: Record<string, { name: string; lat: number; lng: number }> = {};
+
+async function loadOsmParkingPlaces() {
+  try {
+    console.log("Loading supplemental parking locations from OpenStreetMap...");
+    // Singapore's bounding box: south, west, north, east
+    const query = `
+      [out:json][timeout:25];
+      (
+        node["amenity"="parking"]["name"](1.15,103.55,1.48,104.15);
+        way["amenity"="parking"]["name"](1.15,103.55,1.48,104.15);
+      );
+      out center;
+    `;
+    const response = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: query,
+    });
+    if (!response.ok) {
+      throw new Error(`Overpass API returned status ${response.status}`);
+    }
+    const data: any = await response.json();
+    const elements: any[] = data.elements || [];
+
+    const compiled: Record<string, { name: string; lat: number; lng: number }> = {};
+    for (const el of elements) {
+      const name = el.tags?.name;
+      if (!name) continue;
+
+      // Nodes have lat/lon directly; ways return a computed "center" point
+      // because `out center` was used above instead of full geometry.
+      const lat = el.lat ?? el.center?.lat;
+      const lng = el.lon ?? el.center?.lon;
+      if (typeof lat !== "number" || typeof lng !== "number") continue;
+
+      compiled[`osm-${el.type}-${el.id}`] = { name, lat, lng };
+    }
+
+    osmParkingCache = compiled;
+    console.log(`Successfully loaded ${Object.keys(compiled).length} named OpenStreetMap parking locations!`);
+  } catch (error) {
+    console.error("Failed to load OpenStreetMap parking dataset: ", error);
+    console.log("Continuing without OSM supplemental parking — coverage will rely on HDB/URA/mall data only, same as before this feature was added.");
+  }
+}
+
+loadOsmParkingPlaces();
+
+// Straight-line distance in metres between two lat/lng points (Haversine).
+// Used to de-duplicate OSM parking entries against carparks already known
+// from HDB/URA/mall sources, so the same physical carpark isn't listed twice.
+function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 // Helper to determine if a carpark is HDB Central Area
 function isCentralArea(carparkNumber: string, address: string): boolean {
   const centralPrefixes = ["ACB", "BBB", "CBD", "C12", "C13", "C14", "C15", "C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C26"];
@@ -757,6 +834,44 @@ app.get("/api/carparks", async (req, res) => {
           is_central: true,
         });
       }
+    }
+
+    // 4. Append supplemental OSM-sourced named parking locations, skipping
+    // any that are essentially the same physical carpark as one already
+    // included above (within 40m — close enough to be the same site, far
+    // enough apart that two genuinely distinct nearby carparks won't
+    // accidentally get merged).
+    const DEDUPE_RADIUS_METERS = 40;
+    for (const [osmKey, osmPlace] of Object.entries(osmParkingCache)) {
+      const isDuplicate = enrichedCarparks.some(
+        (cp) => distanceMeters(cp.lat, cp.lng, osmPlace.lat, osmPlace.lng) < DEDUPE_RADIUS_METERS
+      );
+      if (isDuplicate) continue;
+
+      enrichedCarparks.push({
+        carpark_number: osmKey,
+        address: osmPlace.name,
+        lat: osmPlace.lat,
+        lng: osmPlace.lng,
+        total_lots: -1,      // Sentinel indicating no live data
+        lots_available: -1,  // Sentinel indicating no live data
+        lot_type: "C",
+        update_datetime: new Date().toISOString(),
+        car_park_type: "PARKING (COMMUNITY-MAPPED)",
+        type_of_parking_system: "UNKNOWN",
+        short_term_parking: "UNKNOWN",
+        free_parking: "NO",
+        night_parking: "UNKNOWN",
+        gantry_height: 0.0,
+        car_park_basement: "N",
+        agency: "OSM",
+        // This location comes from OpenStreetMap community mapping, not an
+        // official government or verified pricing source — no rate is
+        // guessed, and the source is disclosed so the person can judge its
+        // reliability themselves.
+        price_rate: "Rate not available — sourced from OpenStreetMap community data, not an official pricing source. Check on-site signage.",
+        is_central: false,
+      });
     }
 
     res.json(enrichedCarparks);

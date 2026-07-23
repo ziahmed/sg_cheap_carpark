@@ -14,7 +14,7 @@ export interface Carpark {
   night_parking: string;
   gantry_height: number;
   car_park_basement: string;
-  agency: 'HDB' | 'LTA' | 'URA' | 'MALL';
+  agency: 'HDB' | 'LTA' | 'URA' | 'MALL' | 'OSM';
   price_rate: string;
   price_details?: {
     weekday_day?: string;
