@@ -27,7 +27,7 @@ export default function CarparkList({
 }: CarparkListProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<"distance" | "lots" | "price">("distance");
-  const [filterAgency, setFilterAgency] = useState<"ALL" | "HDB" | "MALL">("ALL");
+  const [filterAgency, setFilterAgency] = useState<"ALL" | "HDB" | "MALL" | "OFFICE" | "HOTEL" | "HOSPITAL" | "PRIVATE">("ALL");
   const [filterFreeParking, setFilterFreeParking] = useState(false);
   const [filterMinHeight, setFilterMinHeight] = useState<number>(0);
   const [showFilters, setShowFilters] = useState(false);
@@ -170,18 +170,28 @@ export default function CarparkList({
                 <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                   Parking Type
                 </label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(["ALL", "HDB", "MALL"] as const).map((ag) => (
+                <div className="flex flex-wrap gap-1.5">
+                  {(
+                    [
+                      { id: "ALL", label: "All" },
+                      { id: "HDB", label: "HDB" },
+                      { id: "MALL", label: "Malls & Retail" },
+                      { id: "OFFICE", label: "Office Towers" },
+                      { id: "HOTEL", label: "Hotels" },
+                      { id: "HOSPITAL", label: "Hospitals" },
+                      { id: "PRIVATE", label: "Private Operators" },
+                    ] as const
+                  ).map((ag) => (
                     <button
-                      key={ag}
-                      onClick={() => setFilterAgency(ag)}
-                      className={`text-xs py-1 rounded border transition-all font-medium ${
-                        filterAgency === ag
+                      key={ag.id}
+                      onClick={() => setFilterAgency(ag.id)}
+                      className={`text-xs px-2.5 py-1 rounded-md border transition-all font-medium ${
+                        filterAgency === ag.id
                           ? "bg-blue-600 border-blue-600 text-white shadow-xs"
                           : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600"
                       }`}
                     >
-                      {ag === "ALL" ? "All" : ag === "HDB" ? "HDB Carparks" : "Shopping Malls"}
+                      {ag.label}
                     </button>
                   ))}
                 </div>
@@ -380,7 +390,7 @@ export default function CarparkList({
                       </p>
                       <p className="whitespace-pre-line leading-relaxed">{cp.price_rate}</p>
                       
-                      {cp.agency === "MALL" && cp.price_details && (
+                      {cp.price_details && (
                         <div className="bg-blue-50/70 p-2 rounded-lg border border-blue-100 text-[11px] space-y-1 mt-2 text-blue-900 font-medium">
                           <p className="font-bold flex items-center gap-1 text-[10px] uppercase text-blue-800 tracking-wider">
                             <Sparkles className="w-3 h-3 text-blue-600 animate-pulse" /> Active Rate Right Now

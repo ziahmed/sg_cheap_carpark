@@ -1,6 +1,6 @@
 {
   "name": "SG Carpark Finder",
-  "description": "Real-time carpark availability, pricing, and occupancy rates in Singapore with Google Maps navigation, smart recommendations, and price alert tracking.",
+  "description": "Real-time carpark availability, pricing, and occupancy rates in Singapore with high-performance MapLibre & OpenFreeMap vector maps, SLA OneMap 6-digit postal code precision, comprehensive carpark coverage (LTA, HDB, URA, Malls, SGCarmart rates), and driving directions.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

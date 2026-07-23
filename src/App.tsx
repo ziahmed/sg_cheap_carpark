@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from "motion/react";
 
 // 15 Key Singapore landmarks/hotspots for instant responsive searching and testing
 const HOTSPOTS = [
+  { name: "Newton Food Centre (229955)", lat: 1.3119, lng: 103.8392, desc: "Famous open-air hawker center & carpark" },
   { name: "Orchard Road (Ngee Ann City)", lat: 1.3024, lng: 103.8348, desc: "Prime shopping belt in central area" },
   { name: "Marina Bay Sands (MBS)", lat: 1.2828, lng: 103.8590, desc: "Tourist hub & financial district" },
   { name: "VivoCity Mall", lat: 1.2646, lng: 103.8207, desc: "Gateway to Sentosa & HarbourFront" },

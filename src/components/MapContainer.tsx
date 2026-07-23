@@ -108,7 +108,7 @@ function CarparkMarker({ carpark, isSelected, onSelect }: CarparkMarkerProps) {
                 <span className="text-gray-500">Rate:</span>
                 <span className="font-semibold text-right text-slate-700">{getShortRateLabel(carpark)}</span>
               </p>
-              {carpark.agency === "MALL" && (
+              {carpark.price_details && (
                 <p className="text-[10px] text-blue-600 bg-blue-50 px-1 py-0.5 rounded text-center font-semibold">
                   Active Now: {getActiveRate(carpark).periodLabel}
                 </p>

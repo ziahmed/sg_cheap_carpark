@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { SVY21 } from "./src/utils/svy21.ts";
 import { Carpark } from "./src/types.ts";
+import { PRIVATE_CARPARKS } from "./src/data/privateCarparks.ts";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -26,13 +27,7 @@ const ai = new GoogleGenAI({
 
 app.use(express.json());
 
-// Minimal CORS support: this API is called from two contexts —
-// 1. The web frontend, served from the same origin (no CORS needed there)
-// 2. The iOS/Android app (via Capacitor), which loads from a different
-//    origin (e.g. capacitor://localhost) and therefore needs explicit
-//    cross-origin permission to call this backend.
-// This app has no user accounts/cookies, so a permissive origin is a
-// reasonable tradeoff here rather than maintaining an allow-list.
+// Minimal CORS support
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -47,435 +42,16 @@ app.use((req, res, next) => {
 let hdbCarparkMetadataCache: Record<string, any> = {};
 let cacheLoaded = false;
 
-// Predefined coordinates and info for popular shopping malls and non-HDB locations returned by LTA
-const MALL_COORDINATES: Record<
-  string,
-  {
-    lat: number;
-    lng: number;
-    name: string;
-    price: string;
-    system: string;
-    price_details?: {
-      weekday_day?: string;
-      weekday_night?: string;
-      weekend_day?: string;
-      weekend_night?: string;
-    };
-  }
-> = {
-  "vivocity": {
-    lat: 1.2646,
-    lng: 103.8207,
-    name: "VivoCity",
-    price: "Mon-Fri (7am-6pm): $1.40 1st hr, $0.70/30m after; (6pm-4am): $3.00/entry. Sat-Sun/PH: $1.60 1st hr, $0.80/30m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.40 1st hr, then $0.70 per 30 mins",
-      weekday_night: "$3.00 per entry",
-      weekend_day: "$1.60 1st hr, then $0.80 per 30 mins",
-      weekend_night: "$1.60 1st hr, then $0.80 per 30 mins (until 6pm, then $3.00/entry)",
-    },
-  },
-  "suntec city": {
-    lat: 1.2935,
-    lng: 103.8572,
-    name: "Suntec City Mall",
-    price: "Mon-Fri (7am-5pm): $2.20/hr. Weekdays (5pm-7am): $2.40/entry. Sat-Sun/PH (7am-7am): $2.40/entry (for first 4 hrs, then $1.10/hr).",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.20 per hour",
-      weekday_night: "$2.40 per entry",
-      weekend_day: "$2.40 per entry (for first 4 hrs, then $1.10/hr)",
-      weekend_night: "$2.40 per entry (for first 4 hrs, then $1.10/hr)",
-    },
-  },
-  "marina bay sands": {
-    lat: 1.2828,
-    lng: 103.8590,
-    name: "Marina Bay Sands",
-    price: "Mon-Thu (7am-5pm): $9.00 1st hr, $1.10/30m after. (5pm-7am): $9.00/entry. Fri-Sun/PH: $12.00 1st hr, $1.50/30m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$9.00 1st hr, then $1.10 per 30 mins",
-      weekday_night: "$9.00 per entry (flat rate after 5pm)",
-      weekend_day: "$12.00 1st hr, then $1.50 per 30 mins",
-      weekend_night: "$12.00 1st hr, then $1.50 per 30 mins (until 5pm, then $12.00/entry)",
-    },
-  },
-  "ion orchard": {
-    lat: 1.3040,
-    lng: 103.8318,
-    name: "ION Orchard",
-    price: "Mon-Thu (8am-5pm): $2.68 1st hr, $1.28/30m after; (5pm-12am): $3.00/entry. Fri-Sun/PH (8am-5pm): $3.21 1st hr, $1.60/30m after; (5pm-12am): $3.74/entry.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.68 1st hr, then $1.28 per 30 mins",
-      weekday_night: "$3.00 per entry (after 5pm)",
-      weekend_day: "$3.21 1st hr, then $1.60 per 30 mins",
-      weekend_night: "$3.74 per entry (after 5pm)",
-    },
-  },
-  "plaza singapura": {
-    lat: 1.3007,
-    lng: 103.8447,
-    name: "Plaza Singapura",
-    price: "Mon-Fri (12am-6pm): $1.95 1st hr, $0.55/15m after. (6pm-12am): $3.25/entry. Sat-Sun/PH (all day): $3.25 for 1st 2 hrs, $0.55/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.95 1st hr, then $0.55 per 15 mins",
-      weekday_night: "$3.25 per entry",
-      weekend_day: "$3.25 for 1st 2 hrs, then $0.55 per 15 mins",
-      weekend_night: "$3.25 for 1st 2 hrs, then $0.55 per 15 mins",
-    },
-  },
-  "ngee ann city": {
-    lat: 1.3023,
-    lng: 103.8348,
-    name: "Ngee Ann City / Takashimaya",
-    price: "Mon-Fri (12am-12pm): $1.82/30m; (12pm-5pm): $2.57/30m; (5pm-12am): $3.64/entry. Sat-Sun/PH (12am-5pm): $2.57/30m; (5pm-12am): $3.64/entry.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.82 per 30 mins (until 12pm, then $2.57 per 30 mins)",
-      weekday_night: "$3.64 per entry (after 5pm)",
-      weekend_day: "$2.57 per 30 mins",
-      weekend_night: "$3.64 per entry (after 5pm)",
-    },
-  },
-  "bugis junction": {
-    lat: 1.3002,
-    lng: 103.8561,
-    name: "Bugis Junction",
-    price: "Mon-Fri (8am-6pm): $2.20 1st hr, $0.60/15m after; (6pm-8am): $3.30/entry. Sat-Sun/PH: $3.30 for 1st 2 hrs, $0.60/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.20 1st hr, then $0.60 per 15 mins",
-      weekday_night: "$3.30 per entry",
-      weekend_day: "$3.30 for 1st 2 hrs, then $0.60 per 15 mins",
-      weekend_night: "$3.30 for 1st 2 hrs, then $0.60 per 15 mins",
-    },
-  },
-  "raffles city": {
-    lat: 1.2941,
-    lng: 103.8525,
-    name: "Raffles City Shopping Centre",
-    price: "Mon-Fri (8am-6pm): $2.20 1st hr, $0.55/15m after; (6pm-8am): $3.30/entry. Sat-Sun/PH (all day): $2.40 for 1st 2 hrs, $0.60/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.20 1st hr, then $0.55 per 15 mins",
-      weekday_night: "$3.30 per entry",
-      weekend_day: "$2.40 for 1st 2 hrs, then $0.60 per 15 mins",
-      weekend_night: "$2.40 for 1st 2 hrs, then $0.60 per 15 mins",
-    },
-  },
-  "wisma atria": {
-    lat: 1.3036,
-    lng: 103.8331,
-    name: "Wisma Atria",
-    price: "Mon-Fri (12am-5pm): $2.50 1st hr, $1.50/30m after; (5pm-12am): $3.50/entry. Sat-Sun/PH (12am-5pm): $3.00 1st hr, $1.80/30m after; (5pm-12am): $3.50/entry.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.50 1st hr, then $1.50 per 30 mins",
-      weekday_night: "$3.50 per entry (after 5pm)",
-      weekend_day: "$3.00 1st hr, then $1.80 per 30 mins",
-      weekend_night: "$3.50 per entry (after 5pm)",
-    },
-  },
-  "tampines mall": {
-    lat: 1.3527,
-    lng: 103.9452,
-    name: "Tampines Mall",
-    price: "Mon-Fri (6am-6pm): $1.80 1st hr, $0.50/15m after; (6pm-6am): $2.40/entry. Sat-Sun/PH: $2.00 1st hr, $0.60/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.80 1st hr, then $0.50 per 15 mins",
-      weekday_night: "$2.40 per entry",
-      weekend_day: "$2.00 1st hr, then $0.60 per 15 mins",
-      weekend_night: "$2.00 1st hr, then $0.60 per 15 mins",
-    },
-  },
-  "jurong point": {
-    lat: 1.3396,
-    lng: 103.7067,
-    name: "Jurong Point",
-    price: "Mon-Fri: $1.31/hr (7am-10pm); Free Parking 12pm-2pm Mon-Thu. Flat $1.50/entry after 10pm. Sat-Sun/PH: $1.50/hr for 1st 2 hrs, $1.00/hr after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.31 per hr (Free 12pm-2pm Mon-Thu)",
-      weekday_night: "$1.50 per entry (after 10pm)",
-      weekend_day: "$1.50 per hr for 1st 2 hrs, then $1.00 per hr",
-      weekend_night: "$1.50 per hr for 1st 2 hrs, then $1.00 per hr",
-    },
-  },
-  "nex": {
-    lat: 1.3506,
-    lng: 103.8728,
-    name: "NEX Mall",
-    price: "Mon-Fri (7am-5pm): $1.60 1st hr, $0.50/15m after; (5pm-7am): $2.50/entry. Sat-Sun/PH (all day): $1.80 1st hr, $0.60/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.60 1st hr, then $0.50 per 15 mins",
-      weekday_night: "$2.50 per entry",
-      weekend_day: "$1.80 1st hr, then $0.60 per 15 mins",
-      weekend_night: "$1.80 1st hr, then $0.60 per 15 mins",
-    },
-  },
-  "orchard central": {
-    lat: 1.3008,
-    lng: 103.8396,
-    name: "Orchard Central",
-    price: "Mon-Fri (12am-6pm): $2.60 1st hr, $1.80/hr after; (6pm-12am): $3.50/entry. Sat-Sun/PH: $3.50 for 1st 2 hrs, $2.00/hr after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.60 1st hr, then $1.80 per hour",
-      weekday_night: "$3.50 per entry",
-      weekend_day: "$3.50 for 1st 2 hrs, then $2.00 per hour",
-      weekend_night: "$3.50 for 1st 2 hrs, then $2.00 per hour",
-    },
-  },
-  "313@somerset": {
-    lat: 1.3013,
-    lng: 103.8383,
-    name: "313@Somerset",
-    price: "Mon-Fri (12am-6pm): $2.40 1st hr, $1.60/hr after; (6pm-12am): $3.20/entry. Sat-Sun/PH: $3.20 for 1st 2 hrs, $1.80/hr after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.40 1st hr, then $1.60 per hour",
-      weekday_night: "$3.20 per entry",
-      weekend_day: "$3.20 for 1st 2 hrs, then $1.80 per hour",
-      weekend_night: "$3.20 for 1st 2 hrs, then $1.80 per hour",
-    },
-  },
-  "orchard point": {
-    lat: 1.3014,
-    lng: 103.8402,
-    name: "Orchard Point",
-    price: "Mon-Fri (12am-6pm): $2.35 1st hr, $1.50/30m after; (6pm-12am): $3.50/entry. Sat-Sun/PH: $2.50 1st hr, $1.80/30m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.35 1st hr, then $1.50 per 30 mins",
-      weekday_night: "$3.50 per entry",
-      weekend_day: "$2.50 1st hr, then $1.80 per 30 mins",
-      weekend_night: "$2.50 1st hr, then $1.80 per 30 mins",
-    },
-  },
-  "harbourfront centre": {
-    lat: 1.2642,
-    lng: 103.8215,
-    name: "HarbourFront Centre",
-    price: "Mon-Fri (7am-6pm): $1.60/hr; (6pm-7am): $2.50/entry. Sat-Sun/PH (7am-6pm): $1.80/hr; (6pm-7am): $3.00/entry.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.60 per hour",
-      weekday_night: "$2.50 per entry",
-      weekend_day: "$1.80 per hour",
-      weekend_night: "$3.00 per entry",
-    },
-  },
-  "paragon": {
-    lat: 1.3036,
-    lng: 103.8351,
-    name: "Paragon Shopping Centre",
-    price: "Mon-Sat (3am-5pm): $2.90 for 1st hr, $1.50/30m after; (5pm-3am): $3.30/entry. Sun/PH (all day): $3.30 for 1st hr, $1.50/30m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.90 1st hr, then $1.50 per 30 mins",
-      weekday_night: "$3.30 per entry",
-      weekend_day: "$3.30 1st hr, then $1.50 per 30 mins",
-      weekend_night: "$3.30 per entry (after 5pm)",
-    },
-  },
-  "jewel changi": {
-    lat: 1.3602,
-    lng: 103.9898,
-    name: "Jewel Changi Airport",
-    price: "Daily: $0.04/min ($2.40/hr) for general slots; B2M premium slots are $0.06/min for 1st 90 mins, then $5.00/hr.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.40 per hour ($0.04/min)",
-      weekday_night: "$2.40 per hour ($0.04/min)",
-      weekend_day: "$2.40 per hour ($0.04/min)",
-      weekend_night: "$2.40 per hour ($0.04/min)",
-    },
-  },
-  "funan": {
-    lat: 1.2914,
-    lng: 103.8500,
-    name: "Funan Mall",
-    price: "Mon-Fri (12am-6pm): $2.20 1st hr, $0.60/15m after; (6pm-12am): $3.00/entry. Sat-Sun/PH: $2.50 1st hr, $0.70/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.20 1st hr, then $0.60 per 15 mins",
-      weekday_night: "$3.00 per entry",
-      weekend_day: "$2.50 1st hr, then $0.70 per 15 mins",
-      weekend_night: "$2.50 1st hr, then $0.70 per 15 mins",
-    },
-  },
-  "marina square": {
-    lat: 1.2913,
-    lng: 103.8585,
-    name: "Marina Square",
-    price: "Mon-Fri (7am-5pm): $2.40 per hour; (5pm-7am): $2.40/entry. Sat-Sun/PH (7am-2am): $2.40 per hour for 1st 2 hrs, then $1.20 per 30 mins.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.40 per hour",
-      weekday_night: "$2.40 per entry",
-      weekend_day: "$2.40 per hr for 1st 2 hrs, then $1.20 per 30 mins",
-      weekend_night: "$2.40 per hr for 1st 2 hrs, then $1.20 per 30 mins",
-    },
-  },
-  "millenia walk": {
-    lat: 1.2925,
-    lng: 103.8598,
-    name: "Millenia Walk",
-    price: "Mon-Fri (7am-6pm): $2.20 1st hr, $0.55/15m after; (6pm-7am): $2.20/entry. Sat-Sun/PH: $2.20 for first 2 hrs, then $0.55 per 15 mins.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.20 1st hr, then $0.55 per 15 mins",
-      weekday_night: "$2.20 per entry",
-      weekend_day: "$2.20 for 1st 2 hrs, then $0.55 per 15 mins",
-      weekend_night: "$2.20 for 1st 2 hrs, then $0.55 per 15 mins",
-    },
-  },
-  "clarke quay central": {
-    lat: 1.2891,
-    lng: 103.8465,
-    name: "Clarke Quay Central",
-    price: "Mon-Fri (6am-6pm): $2.50/hr; (6pm-6am): $3.50/entry. Sat-Sun/PH: $2.50 per hour for 1st 2 hrs, then $1.50 per hour after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.50 per hour",
-      weekday_night: "$3.50 per entry",
-      weekend_day: "$2.50 per hr for 1st 2 hrs, then $1.50 per hour",
-      weekend_night: "$2.50 per hr for 1st 2 hrs, then $1.50 per hour",
-    },
-  },
-  "great world city": {
-    lat: 1.2932,
-    lng: 103.8320,
-    name: "Great World City",
-    price: "Mon-Fri (8am-5pm): $1.85 1st hr, $0.45/15m after; (5pm-8am): $3.00/entry. Sat-Sun/PH: $2.20 1st hr, $0.50/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.85 1st hr, then $0.45 per 15 mins",
-      weekday_night: "$3.00 per entry",
-      weekend_day: "$2.20 1st hr, then $0.50 per 15 mins",
-      weekend_night: "$2.20 1st hr, then $0.50 per 15 mins",
-    },
-  },
-  "parkway parade": {
-    lat: 1.3015,
-    lng: 103.9052,
-    name: "Parkway Parade",
-    price: "Mon-Fri (8am-6pm): $1.80 1st hr, $0.55/15m after; (6pm-8am): $2.50/entry. Sat-Sun/PH: $2.00 1st hr, $0.60/15m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.80 1st hr, then $0.55 per 15 mins",
-      weekday_night: "$2.50 per entry",
-      weekend_day: "$2.00 1st hr, then $0.60 per 15 mins",
-      weekend_night: "$2.00 1st hr, then $0.60 per 15 mins",
-    },
-  },
-  "waterway point": {
-    lat: 1.3612,
-    lng: 103.9019,
-    name: "Waterway Point",
-    price: "Mon-Fri (6am-6pm): $1.40 1st hr, $0.70/30m after; (6pm-6am): $2.00/entry. Sat-Sun/PH: $1.60 1st hr, $0.80/30m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.40 1st hr, then $0.70 per 30 mins",
-      weekday_night: "$2.00 per entry",
-      weekend_day: "$1.60 1st hr, then $0.80 per 30 mins",
-      weekend_night: "$1.60 1st hr, then $0.80 per 30 mins",
-    },
-  },
-  "novena square": {
-    lat: 1.3202,
-    lng: 103.8439,
-    name: "Velocity @ Novena Square",
-    price: "Mon-Fri (6am-6pm): $1.80 1st hr, $0.60/20m after; (6pm-6am): $2.50/entry. Sat-Sun/PH: $2.00 1st hr, $0.70/20m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.80 1st hr, then $0.60 per 20 mins",
-      weekday_night: "$2.50 per entry",
-      weekend_day: "$2.00 1st hr, then $0.70 per 20 mins",
-      weekend_night: "$2.00 1st hr, then $0.70 per 20 mins",
-    },
-  },
-  "city square mall": {
-    lat: 1.3113,
-    lng: 103.8566,
-    name: "City Square Mall",
-    price: "Mon-Fri (6am-6pm): $1.80 1st hr, $0.60/20m after; (6pm-6am): $3.00/entry. Sat-Sun/PH: $2.00 1st hr, $0.70/20m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.80 1st hr, then $0.60 per 20 mins",
-      weekday_night: "$3.00 per entry",
-      weekend_day: "$2.00 1st hr, then $0.70 per 20 mins",
-      weekend_night: "$2.00 1st hr, then $0.70 per 20 mins",
-    },
-  },
-  "mustafa centre": {
-    lat: 1.3096,
-    lng: 103.8558,
-    name: "Mustafa Centre",
-    price: "Daily: 1st hr FREE, then $2.00 per hour or part thereof. Highly convenient for overnight shopping.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "1st hr FREE, then $2.00 per hour",
-      weekday_night: "1st hr FREE, then $2.00 per hour",
-      weekend_day: "1st hr FREE, then $2.00 per hour",
-      weekend_night: "1st hr FREE, then $2.00 per hour",
-    },
-  },
-  "chinatown point": {
-    lat: 1.2848,
-    lng: 103.8433,
-    name: "Chinatown Point",
-    price: "Mon-Fri (7am-5pm): $2.20 1st hr, $0.80/30m after; (5pm-7am): $3.00/entry. Sat-Sun/PH: $2.50 1st hr, $1.00/30m after.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$2.20 1st hr, then $0.80 per 30 mins",
-      weekday_night: "$3.00 per entry",
-      weekend_day: "$2.50 1st hr, then $1.00 per 30 mins",
-      weekend_night: "$2.50 1st hr, then $1.00 per 30 mins",
-    },
-  },
-  "bugis+": {
-    lat: 1.3011,
-    lng: 103.8562,
-    name: "Bugis+ Mall",
-    price: "Mon-Fri (12am-5pm): $1.95 1st hr, $0.55/15m after; (5pm-12am): $3.00/entry. Sat-Sun/PH: $3.00 for first 2 hrs, then $0.55 per 15 mins.",
-    system: "Electronic",
-    price_details: {
-      weekday_day: "$1.95 1st hr, then $0.55 per 15 mins",
-      weekday_night: "$3.00 per entry",
-      weekend_day: "$3.00 for 1st 2 hrs, then $0.55 per 15 mins",
-      weekend_night: "$3.00 for 1st 2 hrs, then $0.55 per 15 mins",
-    },
-  },
-  "cairnhill community club": {
-    lat: 1.3104,
-    lng: 103.8389,
-    name: "Cairnhill Community Club",
-    price: "Rate not verified in this app's database — check on-site signage or the OneService/URA MyTransport.SG app for current tariff.",
-    system: "Electronic",
-  },
-  "environment building": {
-    lat: 1.3105,
-    lng: 103.8362,
-    name: "Environment Building (40 Scotts Road)",
-    price: "Rate not verified in this app's database — check on-site signage or the OneService/URA MyTransport.SG app for current tariff.",
-    system: "Electronic",
-  },
-};
+// Predefined coordinates and SGCarmart scraped rates for private carparks
+const MALL_COORDINATES = PRIVATE_CARPARKS;
 
 // Start background task to fetch and compile Singapore's carpark metadata
 async function loadCarparkMetadata() {
   try {
     console.log("Loading Singapore carpark static database from GitHub...");
     const response = await fetch(
-      "https://raw.githubusercontent.com/MarkFull/sg-parking/master/data/raw/hdb.json"
+      "https://raw.githubusercontent.com/MarkFull/sg-parking/master/data/raw/hdb.json",
+      { signal: AbortSignal.timeout(10000) }
     );
     if (!response.ok) {
       throw new Error(`HTTP Error fetching metadata: ${response.statusText}`);
@@ -508,8 +84,8 @@ async function loadCarparkMetadata() {
     hdbCarparkMetadataCache = compiled;
     cacheLoaded = true;
     console.log(`Successfully compiled coordinates for ${Object.keys(compiled).length} HDB carparks!`);
-  } catch (error) {
-    console.error("Failed to load Singapore carpark metadata: ", error);
+  } catch (error: any) {
+    console.warn("Failed to load Singapore carpark metadata: ", error.message || error);
     console.log("Falling back to local generated HDB database for basic services.");
   }
 }
@@ -534,7 +110,8 @@ async function loadUraParkingPlaces() {
     console.log("Loading URA parking places dataset...");
     const datasetId = "d_9bf8620ecfdc8a5f8f77e3f02160af5c";
     const pollResponse = await fetch(
-      `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`
+      `https://api-open.data.gov.sg/v1/public/api/datasets/${datasetId}/poll-download`,
+      { signal: AbortSignal.timeout(10000) }
     );
     if (!pollResponse.ok) {
       throw new Error(`Poll-download request failed with status ${pollResponse.status}`);
@@ -545,7 +122,7 @@ async function loadUraParkingPlaces() {
       throw new Error("No download URL returned from data.gov.sg poll-download");
     }
 
-    const geoJsonResponse = await fetch(downloadUrl);
+    const geoJsonResponse = await fetch(downloadUrl, { signal: AbortSignal.timeout(10000) });
     if (!geoJsonResponse.ok) {
       throw new Error(`GeoJSON download failed with status ${geoJsonResponse.status}`);
     }
@@ -569,8 +146,8 @@ async function loadUraParkingPlaces() {
 
     uraParkingPlacesCache = compiled;
     console.log(`Successfully loaded ${Object.keys(compiled).length} URA parking places!`);
-  } catch (error) {
-    console.error("Failed to load URA parking places dataset: ", error);
+  } catch (error: any) {
+    console.warn("Failed to load URA parking places dataset: ", error.message || error);
     console.log("Continuing without URA parking place enrichment — unmatched non-HDB, non-mall carparks will still be omitted, same as before this feature was added.");
   }
 }
@@ -595,28 +172,48 @@ loadUraParkingPlaces();
 let osmParkingCache: Record<string, { name: string; lat: number; lng: number }> = {};
 
 async function loadOsmParkingPlaces() {
-  try {
-    console.log("Loading supplemental parking locations from OpenStreetMap...");
-    // Singapore's bounding box: south, west, north, east
-    const query = `
-      [out:json][timeout:25];
-      (
-        node["amenity"="parking"]["name"](1.15,103.55,1.48,104.15);
-        way["amenity"="parking"]["name"](1.15,103.55,1.48,104.15);
-      );
-      out center;
-    `;
-    const response = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      headers: { "Content-Type": "text/plain" },
-      body: query,
-    });
-    if (!response.ok) {
-      throw new Error(`Overpass API returned status ${response.status}`);
-    }
-    const data: any = await response.json();
-    const elements: any[] = data.elements || [];
+  console.log("Loading supplemental parking locations from OpenStreetMap...");
+  // Singapore's bounding box: south, west, north, east
+  const query = `
+    [out:json][timeout:15];
+    (
+      node["amenity"="parking"]["name"](1.15,103.55,1.48,104.15);
+      way["amenity"="parking"]["name"](1.15,103.55,1.48,104.15);
+    );
+    out center;
+  `;
 
+  const endpoints = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.ai/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+  ];
+
+  let data: any = null;
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: query,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (response.ok) {
+        data = await response.json();
+        break;
+      }
+    } catch {
+      // Try next endpoint silently
+    }
+  }
+
+  if (!data || !Array.isArray(data.elements)) {
+    console.warn("Could not fetch OSM supplemental parking dataset (Overpass endpoints timed out or unreachable). Continuing with HDB/URA/Mall data.");
+    return;
+  }
+
+  try {
+    const elements: any[] = data.elements || [];
     const compiled: Record<string, { name: string; lat: number; lng: number }> = {};
     for (const el of elements) {
       const name = el.tags?.name;
@@ -633,9 +230,8 @@ async function loadOsmParkingPlaces() {
 
     osmParkingCache = compiled;
     console.log(`Successfully loaded ${Object.keys(compiled).length} named OpenStreetMap parking locations!`);
-  } catch (error) {
-    console.error("Failed to load OpenStreetMap parking dataset: ", error);
-    console.log("Continuing without OSM supplemental parking — coverage will rely on HDB/URA/mall data only, same as before this feature was added.");
+  } catch (error: any) {
+    console.warn("Failed to parse OpenStreetMap parking dataset: ", error.message || error);
   }
 }
 
@@ -769,20 +365,20 @@ app.get("/api/carparks", async (req, res) => {
             lots_available: lotsAvail,
             lot_type: lotType,
             update_datetime: updateTime,
-            car_park_type: "MALL CAR PARK",
+            car_park_type: `${(mall.agency || "MALL").toUpperCase()} CAR PARK`,
             type_of_parking_system: mall.system + " PARKING SYSTEM",
-            short_term_parking: "MALL HOURS",
+            short_term_parking: "OPERATING HOURS",
             free_parking: "NO",
-            night_parking: "MALL HOURS",
+            night_parking: "OPERATING HOURS",
             gantry_height: 2.1,
             car_park_basement: "Y",
-            agency: "MALL",
+            agency: (mall.agency as any) || "MALL",
             price_rate: mall.price,
             price_details: mall.price_details,
             is_central: true,
           });
         } else {
-          // Not HDB, not a known mall — check URA's official parking
+          // Not HDB, not a known private site — check URA's official parking
           // places dataset before giving up on this carpark entirely.
           const uraMatch = uraParkingPlacesCache[cpNum];
           if (uraMatch) {
@@ -803,13 +399,6 @@ app.get("/api/carparks", async (req, res) => {
               gantry_height: 0.0,
               car_park_basement: "N",
               agency: "URA",
-              // Unlike HDB (fixed, known tariff rules) or the hand-curated
-              // malls above (specific verified rates), this dataset only
-              // gives us the carpark's name/location — not its tariff. It
-              // would be misleading to guess a specific dollar figure here,
-              // so this is intentionally honest about what we don't know
-              // rather than reusing HDB's rate (which often doesn't apply
-              // to URA/private carparks) or fabricating a number.
               price_rate: "Rate varies by location — check on-site signage or the URA MyTransport.SG app for current tariff.",
               is_central: false,
             });
@@ -818,11 +407,11 @@ app.get("/api/carparks", async (req, res) => {
       }
     }
 
-    // 3. Append remaining predefined malls without real-time data
+    // 3. Append remaining predefined private carparks/malls without real-time LTA feeds
     for (const [key, mall] of Object.entries(MALL_COORDINATES)) {
       if (!matchedMalls.has(key)) {
         enrichedCarparks.push({
-          carpark_number: `MALL-${key.toUpperCase().replace(/\s+/g, "-")}`,
+          carpark_number: `${(mall.agency || "PVT").toUpperCase()}-${key.toUpperCase().replace(/[^A-Z0-9]/g, "-")}`,
           address: mall.name,
           lat: mall.lat,
           lng: mall.lng,
@@ -830,14 +419,14 @@ app.get("/api/carparks", async (req, res) => {
           lots_available: -1,   // Sentinel indicating no live data
           lot_type: "C",
           update_datetime: new Date().toISOString(),
-          car_park_type: "MALL CAR PARK",
+          car_park_type: `${(mall.agency || "MALL").toUpperCase()} CAR PARK`,
           type_of_parking_system: mall.system + " PARKING SYSTEM",
-          short_term_parking: "MALL HOURS",
+          short_term_parking: "OPERATING HOURS",
           free_parking: "NO",
-          night_parking: "MALL HOURS",
+          night_parking: "OPERATING HOURS",
           gantry_height: 2.1,
           car_park_basement: "Y",
-          agency: "MALL",
+          agency: (mall.agency as any) || "MALL",
           price_rate: mall.price,
           price_details: mall.price_details,
           is_central: true,
@@ -962,7 +551,6 @@ interface GeocodeResult {
 
 async function searchOneMap(query: string): Promise<GeocodeResult[]> {
   const token = await getOneMapToken();
-  if (!token) return [];
 
   try {
     const url = new URL("https://www.onemap.gov.sg/api/common/elastic/search");
@@ -971,14 +559,29 @@ async function searchOneMap(query: string): Promise<GeocodeResult[]> {
     url.searchParams.set("getAddrDetails", "Y");
     url.searchParams.set("pageNum", "1");
 
-    const response = await fetch(url.toString(), {
-      headers: { Authorization: token },
-    });
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = token;
+    }
 
-    if (response.status === 401) {
-      // Token expired/invalid despite our cache bookkeeping — clear it so
-      // the next request re-authenticates instead of repeatedly failing.
+    const response = await fetch(url.toString(), { headers });
+
+    if (response.status === 401 && token) {
+      // Token expired/invalid — clear cache and try anonymously
       oneMapTokenCache = null;
+      const publicResponse = await fetch(url.toString());
+      if (publicResponse.ok) {
+        const publicData: any = await publicResponse.json();
+        const results: any[] = publicData.results || [];
+        return results
+          .map((r: any) => ({
+            name: r.ADDRESS || [r.BLK_NO, r.ROAD_NAME, r.BUILDING].filter(Boolean).join(" ").trim(),
+            lat: parseFloat(r.LATITUDE),
+            lng: parseFloat(r.LONGITUDE),
+            postal: (r.POSTAL || "").trim(),
+          }))
+          .filter((r) => r.name && !isNaN(r.lat) && !isNaN(r.lng));
+      }
       return [];
     }
     if (!response.ok) {
@@ -1004,7 +607,8 @@ async function searchOneMap(query: string): Promise<GeocodeResult[]> {
 }
 
 // GET /api/geocode?q=<free text query, or a 6-digit Singapore postal code>
-// Tries OneMap (SLA's authoritative Singapore address data) first, then
+// Tries local private carpark dictionary first for instant 0ms result,
+// then OneMap (SLA's authoritative Singapore address data), then
 // falls back to OpenStreetMap Nominatim — proxied server-side either way so
 // the browser doesn't need custom headers and Nominatim's ~1 req/sec fair
 // use policy is respected from a single process.
@@ -1015,10 +619,22 @@ app.get("/api/geocode", async (req, res) => {
     return res.status(400).json({ error: "Query parameter 'q' is required" });
   }
 
+  const queryLower = query.toLowerCase();
   const isPostalCode = /^\d{6}$/.test(query);
 
+  // 0. Direct match against known local carpark / landmark dictionary
+  if (PRIVATE_CARPARKS[queryLower]) {
+    const match = PRIVATE_CARPARKS[queryLower];
+    return res.json([{
+      name: match.name,
+      lat: match.lat,
+      lng: match.lng,
+      postal: query,
+    }]);
+  }
+
   try {
-    // 1. Try OneMap first (no-op if ONEMAP_EMAIL/ONEMAP_PASSWORD aren't set)
+    // 1. Try OneMap first (SLA's official Singapore address database)
     const oneMapResults = await searchOneMap(query);
     if (oneMapResults.length > 0) {
       // For postal code searches specifically, only trust a result whose

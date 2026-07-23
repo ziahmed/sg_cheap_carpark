@@ -5,7 +5,7 @@ import { Carpark } from "../types.ts";
  * Takes note of weekday vs weekend and day vs night.
  */
 export function getActiveRate(carpark: Carpark): { rate: string; periodLabel: string } {
-  if (carpark.agency !== "MALL" || !carpark.price_details) {
+  if (!carpark.price_details) {
     if (carpark.agency === "HDB") {
       const now = new Date();
       const day = now.getDay(); // 0 = Sun, 6 = Sat
