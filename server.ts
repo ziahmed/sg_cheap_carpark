@@ -686,7 +686,16 @@ function getHDBPriceRate(carparkNumber: string, address: string): { rate: string
 
 // Health endpoint
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", cacheLoaded });
+  res.json({
+    status: "ok",
+    cacheLoaded,
+    // Render automatically injects these at runtime, so this lets anyone
+    // verify exactly which commit is actually live — no dashboard access
+    // needed. Useful for confirming a deploy actually picked up the latest
+    // push, especially when troubleshooting "my fix isn't showing up" cases.
+    deployedCommit: process.env.RENDER_GIT_COMMIT || null,
+    deployedBranch: process.env.RENDER_GIT_BRANCH || null,
+  });
 });
 
 // GET /api/carparks
