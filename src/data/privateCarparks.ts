@@ -76,7 +76,7 @@ export const PRIVATE_CARPARKS: Record<string, PrivateCarparkEntry> = {
   "229955": {
     lat: 1.3121,
     lng: 103.8393,
-    name: "Newton Food Centre Open Carpark (S229955)",
+    name: "Newton Food Centre Open Carpark",
     agency: "PRIVATE",
     price: "Mon-Sat (7am-5pm): $1.20/30m; (5pm-7am): $0.60/30m, Night Cap $5.00. Sun/PH: $0.60/30m, Night Cap $5.00.",
     system: "Electronic",

@@ -410,6 +410,14 @@ app.get("/api/carparks", async (req, res) => {
     // 3. Append remaining predefined private carparks/malls without real-time LTA feeds
     for (const [key, mall] of Object.entries(MALL_COORDINATES)) {
       if (!matchedMalls.has(key)) {
+        const normName = mall.name.toLowerCase().trim();
+        const isDuplicate = enrichedCarparks.some(
+          (cp) =>
+            cp.address.toLowerCase().trim() === normName ||
+            distanceMeters(cp.lat, cp.lng, mall.lat, mall.lng) < 25
+        );
+        if (isDuplicate) continue;
+
         enrichedCarparks.push({
           carpark_number: `${(mall.agency || "PVT").toUpperCase()}-${key.toUpperCase().replace(/[^A-Z0-9]/g, "-")}`,
           address: mall.name,
