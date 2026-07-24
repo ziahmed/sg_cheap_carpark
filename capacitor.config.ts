@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.sgcheapcarpark.app',
-  appName: 'Karpark Lobang',
+  appName: 'SG Cheap Carpark',
   webDir: 'dist',
 };
 
