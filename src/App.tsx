@@ -421,7 +421,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-sm font-black tracking-tight text-slate-800 flex items-center gap-1.5 uppercase">
-              SG Carpark Finder
+              Karpark Lobang
               <span className="bg-blue-500/10 text-blue-600 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-500/20">
                 LIVE FEED
               </span>
